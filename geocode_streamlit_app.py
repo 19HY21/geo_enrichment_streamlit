@@ -303,7 +303,7 @@ def main():
     # 前回実行結果を常に表示し、ダウンロードも保持（チェックボックス方式）
     if "last_output" in st.session_state:
         lo = st.session_state["last_output"]
-        st.markdown("#### 前回の結果")
+        st.markdown("#### 出力データサンプル")
         if lo.get("df_head") is not None:
             st.dataframe(lo["df_head"])
 
