@@ -268,10 +268,6 @@ def main():
         "アップロードしたExcel/CSVにマスタ情報と緯度経度を付与し、結果データと地図HTMLをダウンロードできます。"
         "郵便番号・住所突合とジオコーディングをブラウザから実行します。"
     )
-    st.write(
-        "※ Streamlit の統計送信を無効にする場合は `%USERPROFILE%\\.streamlit\\config.toml` に "
-        "`[browser]\\ngatherUsageStats = false` を設定してください。メール入力プロンプトは空のまま Enter でスキップできます。"
-    )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
     if uploaded is None:
@@ -303,7 +299,6 @@ def main():
                 "df_head": df_out.head(),
             }
         st.success("処理完了")
-        st.dataframe(df_out.head())
 
     # 前回実行結果を常に表示し、ダウンロードも保持（チェックボックス方式）
     if "last_output" in st.session_state:
