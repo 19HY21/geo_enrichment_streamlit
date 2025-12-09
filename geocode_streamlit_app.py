@@ -57,7 +57,6 @@ logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.x
 
 # 利用する関数・定数を束ねる
 CACHE_DIR = logic.CACHE_DIR
-GLOBAL_CACHE_PATH = logic.GLOBAL_CACHE_PATH
 OUTPUT_SUFFIX = logic.OUTPUT_SUFFIX
 attach_master_by_address = logic.attach_master_by_address
 attach_master_by_zip = logic.attach_master_by_zip
@@ -131,15 +130,13 @@ def _run_pipeline(
         prog_bar(100, "[addr] 完了")
         _log(log_box, f"住所突合完了 使用行: {len(used_master_idx)}件")
 
-    # ジオコーディング（キャッシュは毎回グローバルも参照）
+    # ジオコーディング（キャッシュはローカル使用）
     os.makedirs(CACHE_DIR, exist_ok=True)
-    cache_global = load_cache(GLOBAL_CACHE_PATH)
     local_cache_path = os.path.join(CACHE_DIR, "streamlit_local_cache.json")
-    cache_local = load_cache(local_cache_path)
-    cache = {**cache_global, **cache_local}
+    cache = load_cache(local_cache_path)
     map_bytes = None
     map_name = None
-    _log(log_box, f"キャッシュ読込: グローバル{len(cache_global)}件 / ローカル{len(cache_local)}件")
+    _log(log_box, f"キャッシュ読込: ローカル{len(cache)}件")
 
     if addr_cols:
         _log(log_box, "ジオコーディング開始（ユニーク住所ベース）")
@@ -163,7 +160,6 @@ def _run_pipeline(
         )
         _log(log_box, f"ジオコーディング完了 cache_hit={cache_hit} 新規={new_count}")
         merged_cache = {**cache, **geo_results}
-        save_cache(GLOBAL_CACHE_PATH, merged_cache)
         save_cache(local_cache_path, merged_cache)
         df_work = add_geocode_columns(df_work, addr_cols, geo_results)
     else:
@@ -262,11 +258,10 @@ def _load_input(uploaded_file) -> Tuple[str, pd.DataFrame, pd.ExcelFile, str, st
 
 
 def main():
-    st.set_page_config(page_title="Geo Enrichment Tool (Streamlit)", layout="wide")
-    st.title("Geo Enrichment Tool (Streamlit)")
+    st.set_page_config(page_title="Geo Enrichment Tool", layout="wide")
+    st.title("Geo Enrichment Tool")
     st.caption(
-        "アップロードしたExcel/CSVにマスタ情報と緯度経度を付与し、結果データと地図HTMLをダウンロードできます。"
-        "郵便番号・住所突合とジオコーディングをブラウザから実行します。"
+        "住所・郵便番号から、日本郵政マスタを用いて都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与し、結果データと地図HTMLを生成する アプリ です。"
     )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
