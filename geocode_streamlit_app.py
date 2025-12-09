@@ -24,6 +24,32 @@ LOGIC_DIR = os.path.join(BASE_DIR, "geo_logic")
 if LOGIC_DIR not in sys.path:
     sys.path.insert(0, LOGIC_DIR)
 
+
+def _patch_tkinter_for_streamlit():
+    """
+    Streamlit Cloud では _tkinter が無いため、GUI部分を使わない前提でダミーを差し込む。
+    geocode_gui_ver2 は関数利用のみで GUI は呼ばない。
+    """
+    import types
+
+    tk_dummy = types.ModuleType("tkinter")
+    tk_dummy.Tk = object
+    tk_dummy.Frame = object
+    tk_dummy.StringVar = object
+    tk_dummy.IntVar = object
+    tk_dummy.BooleanVar = object
+    tk_dummy.Label = object
+    tk_dummy.Entry = object
+    tk_dummy.Button = object
+    tk_dummy.Text = object
+
+    sys.modules.setdefault("tkinter", tk_dummy)
+    sys.modules.setdefault("tkinter.filedialog", types.ModuleType("tkinter.filedialog"))
+    sys.modules.setdefault("tkinter.messagebox", types.ModuleType("tkinter.messagebox"))
+    sys.modules.setdefault("tkinter.ttk", types.ModuleType("tkinter.ttk"))
+
+
+_patch_tkinter_for_streamlit()
 import geocode_gui_ver2 as logic  # noqa: E402
 
 # マスタパスをGitHub内の data に差し替える
