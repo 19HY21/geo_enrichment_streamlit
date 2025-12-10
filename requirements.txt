@@ -4,3 +4,6 @@ openpyxl
 requests
 tqdm
 folium
+fastapi
+uvicorn
+python-multipart

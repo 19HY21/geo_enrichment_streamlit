@@ -1,42 +1,69 @@
 # geo_enrichment_streamlit
 
 住所・郵便番号から、日本郵政マスタを用いて  
-**都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与し、  
-結果データと地図HTMLを生成する Streamlit アプリ** です。
+**都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与するツール群** です。
 
-ブラウザから Excel / CSV をアップロードするだけで、
-- 郵便番号・住所のマスタ突合
-- ジオコーディング（緯度・経度付与）
-- 結果CSV/Excelのダウンロード
-- 地図HTMLのダウンロード
+- ブラウザUI: `geocode_streamlit_app.py`（Streamlit）
+- API: `api/main.py`（FastAPI ＋ 簡易ジョブキュー）
+- コアロジック: `geo_logic/core.py`（UI非依存）
+- バッチ実行ヘルパ: `geo_logic/tasks.py`
+- ジョブキュー: `geo_logic/job_queue.py`
 
-まで実行できます。
+> Streamlit Cloud のような一時コンテナ環境では、キャッシュはコンテナ内の `geo_logic/cache/` に書かれ、再起動で消えます。必要ならキャッシュJSONをダウンロードし、次回アップロードしてください。
 
 ---
 
-## 機能概要
+## 主要機能
 
 - 入力ファイル：CSV / Excel（複数シート対応）
-- 郵便番号マスタ：日本郵政の公開データを使用（同梱 or 別取得）
 - 郵便番号・住所によるマスタ突合
-- 住所からのジオコーディング（Nominatim / キャッシュ利用）
-- 結果データ＋地図HTMLのダウンロード
-- Streamlit によるブラウザ UI
-
-※ 実装本体は `geocode_streamlit.py` にあります。
+- 住所からのジオコーディング（Nominatim / キャッシュ利用、5,000件バッチ）
+- 結果CSV/Excelのダウンロード
+- キャッシュJSONのアップロード／ダウンロード
 
 ---
 
-## フォルダ構成（予定）
+## 実行方法
+
+### Streamlit（ブラウザUI）
+```bash
+streamlit run geocode_streamlit_app.py
+```
+
+### FastAPI（API）
+```bash
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+- ジョブ投入: `POST /jobs`（file, zip_cols, addr_cols, cache_file など）
+- 進捗確認: `GET /jobs/{job_id}`
+- 出力取得: `GET /jobs/{job_id}/result`
+- キャッシュ取得: `GET /jobs/{job_id}/cache`
+
+---
+
+## キャッシュについて
+- パス: `geo_logic/cache/streamlit_local_cache.json`（ジョブID付きで別名保存）
+- Streamlit Cloud ではコンテナ再起動で消えます。必要ならキャッシュJSONをダウンロード→次回アップロードしてください。
+
+---
+
+## フォルダ構成
 
 ```text
 geo_enrichment_streamlit/
-├─ geocode_streamlit.py          # Streamlit アプリ入口
-├─ geocode_gui_ver2.py           # 住所/郵便番号突合・ジオコーディングロジック
+├─ geocode_streamlit_app.py      # Streamlit アプリ入口（UIのみ）
+├─ api/
+│   └─ main.py                   # FastAPI エントリ（ジョブ投入/進捗/結果取得）
+├─ geo_logic/
+│   ├─ core.py                   # 住所/郵便番号突合・ジオコーディング純粋ロジック
+│   ├─ tasks.py                  # バッチ実行ヘルパ（コアを呼ぶ）
+│   ├─ job_queue.py              # 簡易ジョブキュー（スレッドワーカー）
+│   ├─ cache/                    # キャッシュ保存先（コンテナ内、非永続）
+│   └─ archive/                  # 旧ファイル置き場
 ├─ data/
 │   └─ zipcode_localgoverment_mst.xlsx  # 日本郵政ベースのマスタ（任意）
 ├─ .streamlit/
 │   └─ config.toml               # 使用統計オフなどの設定（任意）
 ├─ .gitignore
-├─ .gitattributes                # Git LFS 設定（必要な場合）
 └─ README.md
+```
