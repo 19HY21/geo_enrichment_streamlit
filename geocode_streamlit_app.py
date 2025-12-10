@@ -9,10 +9,9 @@ Geo Enrichment Tool (Streamlit版)
 """
 
 import io
+import json
 import os
 import sys
-import tempfile
-import zipfile
 from typing import List, Tuple
 
 import pandas as pd
@@ -58,14 +57,15 @@ logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.x
 # 利用する関数・定数を束ねる
 CACHE_DIR = logic.CACHE_DIR
 OUTPUT_SUFFIX = logic.OUTPUT_SUFFIX
+BATCH_SIZE_DEFAULT = 5000
 attach_master_by_address = logic.attach_master_by_address
 attach_master_by_zip = logic.attach_master_by_zip
-create_map_html = logic.create_map_html
 geocode_addresses = logic.geocode_addresses
 load_cache = logic.load_cache
 read_master = logic.read_master
 save_cache = logic.save_cache
 add_geocode_columns = logic.add_geocode_columns
+normalize_address = logic.normalize_address
 
 
 def _log(log_box, msg: str):
@@ -84,6 +84,8 @@ def _run_pipeline(
     xls_for_copy: pd.ExcelFile,
     log_box,
     base_name: str,
+    batch_size: int,
+    uploaded_cache: dict | None = None,
 ):
     """突合〜ジオコーディング〜出力データ生成を実行。"""
     st.session_state["logs"] = []
@@ -134,8 +136,8 @@ def _run_pipeline(
     os.makedirs(CACHE_DIR, exist_ok=True)
     local_cache_path = os.path.join(CACHE_DIR, "streamlit_local_cache.json")
     cache = load_cache(local_cache_path)
-    map_bytes = None
-    map_name = None
+    if uploaded_cache:
+        cache.update(uploaded_cache)
     _log(log_box, f"キャッシュ読込: ローカル{len(cache)}件")
 
     if addr_cols:
@@ -143,24 +145,38 @@ def _run_pipeline(
         all_addrs = []
         for col in addr_cols:
             all_addrs.extend(df_work[col].dropna().tolist())
+        unique_addrs = [a for a in pd.Series(all_addrs).dropna().unique().tolist() if normalize_address(a)]
+        total_unique = len(unique_addrs)
+        _log(log_box, f"ユニーク住所数: {total_unique}件 / バッチサイズ: {batch_size}")
 
-        def geo_prog(done, total, kind):
-            pct = done / max(total, 1) * 100
-            prog_bar(pct, f"[geo] {done}/{total} ({pct:.1f}%)")
+        geo_results = {}
+        overall_done = 0
 
-        def geo_cache_save(c):
-            save_cache(local_cache_path, c)
+        for start in range(0, total_unique, batch_size):
+            end = min(start + batch_size, total_unique)
+            chunk = unique_addrs[start:end]
 
-        geo_results, cache_hit, new_count = geocode_addresses(
-            all_addrs,
-            user_agent="GeoGUI_streamlit",
-            cache=cache,
-            progress_cb=geo_prog,
-            cache_save_cb=geo_cache_save,
-        )
-        _log(log_box, f"ジオコーディング完了 cache_hit={cache_hit} 新規={new_count}")
-        merged_cache = {**cache, **geo_results}
-        save_cache(local_cache_path, merged_cache)
+            def geo_prog(done, total, kind):
+                now_done = overall_done + done
+                pct = now_done / max(total_unique, 1) * 100
+                prog_bar(pct, f"[geo] {now_done}/{total_unique} ({pct:.1f}%)")
+
+            def geo_cache_save(c):
+                save_cache(local_cache_path, c)
+
+            _log(log_box, f"バッチ処理: {start+1}〜{end}件目")
+            chunk_results, cache_hit, new_count = geocode_addresses(
+                chunk,
+                user_agent="GeoGUI_streamlit",
+                cache=cache,
+                progress_cb=geo_prog,
+                cache_save_cb=geo_cache_save,
+            )
+            geo_results.update(chunk_results)
+            save_cache(local_cache_path, cache)
+            overall_done = end
+            _log(log_box, f"バッチ完了 cache_hit={cache_hit} 新規={new_count} 累計={overall_done}/{total_unique}")
+
         df_work = add_geocode_columns(df_work, addr_cols, geo_results)
     else:
         _log(log_box, "住所列が未選択のためジオコーディングはスキップ")
@@ -178,25 +194,7 @@ def _run_pipeline(
 
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar(100, "完了")
-
-    # 地図HTML
-    if addr_cols:
-        with tempfile.TemporaryDirectory() as td:
-            html_path = os.path.join(td, f"{out_base}{OUTPUT_SUFFIX}_map.html")
-            map_path = create_map_html(df_work, addr_cols, html_path)
-            if map_path and os.path.exists(map_path):
-                with open(map_path, "rb") as f:
-                    map_bytes = f.read()
-                    map_name = os.path.basename(map_path)
-
-    # ローカルキャッシュは完了時に削除
-    try:
-        if os.path.exists(local_cache_path):
-            os.remove(local_cache_path)
-    except Exception:
-        pass
-
-    return buf, fname, map_bytes, map_name, df_work
+    return buf, fname, df_work, local_cache_path
 
 
 def _build_excel_output(
@@ -261,7 +259,7 @@ def main():
     st.set_page_config(page_title="Geo Enrichment Tool", layout="wide")
     st.title("Geo Enrichment Tool")
     st.caption(
-        "住所・郵便番号から、日本郵政マスタを用いて都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与し、結果データと地図HTMLを生成する アプリ です。"
+        "住所・郵便番号から、日本郵政マスタを用いて都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与し、結果データを生成するアプリです。"
     )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
@@ -277,21 +275,37 @@ def main():
     cols = df_input.columns.tolist()
     zip_cols = st.multiselect("郵便番号列を選択（複数可）", cols)
     addr_cols = st.multiselect("住所列を選択（複数可）", cols)
+    cache_upload = st.file_uploader("キャッシュJSONをアップロード（任意）", type=["json"])
 
     st.markdown("#### ログ")
     log_box = st.empty()
 
     if st.button("実行"):
         with st.spinner("処理中..."):
-            buf, fname, map_bytes, map_name, df_out = _run_pipeline(
-                df_input, sheet_name, kind, zip_cols, addr_cols, xls, log_box, base_name
+            uploaded_cache = None
+            if cache_upload is not None:
+                try:
+                    raw = json.load(cache_upload)
+                    uploaded_cache = {k: tuple(v) if isinstance(v, list) else tuple(v) for k, v in raw.items()}
+                except Exception:
+                    st.warning("キャッシュJSONの読み込みに失敗しました。無視して続行します。")
+            buf, fname, df_out, cache_path = _run_pipeline(
+                df_input,
+                sheet_name,
+                kind,
+                zip_cols,
+                addr_cols,
+                xls,
+                log_box,
+                base_name,
+                batch_size=BATCH_SIZE_DEFAULT,
+                uploaded_cache=uploaded_cache,
             )
             st.session_state["last_output"] = {
                 "buf": buf.getvalue(),
                 "fname": fname,
-                "map_bytes": map_bytes,
-                "map_name": map_name,
                 "df_head": df_out.head(),
+                "cache_path": cache_path,
             }
         st.success("処理完了")
 
@@ -302,42 +316,24 @@ def main():
         if lo.get("df_head") is not None:
             st.dataframe(lo["df_head"])
 
-        st.write("ダウンロードする内容を選択してください（チェック後に下のボタンで保存）。")
-        sel_data = st.checkbox("結果データ", value=True, key="dl_data_chk")
-        has_map = bool(lo.get("map_bytes") and lo.get("map_name"))
-        sel_map = st.checkbox("地図HTML", value=has_map, key="dl_map_chk", disabled=not has_map)
+        st.download_button(
+            "結果データをダウンロード",
+            data=lo["buf"],
+            file_name=lo["fname"],
+            mime="application/octet-stream",
+            key="download_data",
+        )
 
-        download_bytes = None
-        download_name = None
-        download_mime = "application/octet-stream"
-
-        if sel_data and sel_map and has_map:
-            buf_zip = io.BytesIO()
-            with zipfile.ZipFile(buf_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr(lo["fname"], lo["buf"])
-                zf.writestr(lo["map_name"], lo["map_bytes"])
-            buf_zip.seek(0)
-            download_bytes = buf_zip.getvalue()
-            download_name = "geo_results.zip"
-            download_mime = "application/zip"
-        elif sel_data:
-            download_bytes = lo["buf"]
-            download_name = lo["fname"]
-        elif sel_map and has_map:
-            download_bytes = lo["map_bytes"]
-            download_name = lo["map_name"]
-            download_mime = "text/html"
-
-        if download_bytes and download_name:
+        if lo.get("cache_path") and os.path.exists(lo["cache_path"]):
+            with open(lo["cache_path"], "rb") as f:
+                cache_bytes = f.read()
             st.download_button(
-                "選択したファイルをダウンロード",
-                data=download_bytes,
-                file_name=download_name,
-                mime=download_mime,
-                key="download_selected",
+                "キャッシュJSONをダウンロード（次回再利用用）",
+                data=cache_bytes,
+                file_name=os.path.basename(lo["cache_path"]),
+                mime="application/json",
+                key="download_cache",
             )
-        else:
-            st.info("ダウンロード対象をチェックしてください。")
 
 
 if __name__ == "__main__":
