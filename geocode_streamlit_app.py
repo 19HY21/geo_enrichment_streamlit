@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Geo Enrichment Tool (Streamlit版)
-- geocode_gui_ver2 のロジックを利用し、ブラウザから郵便番号/住所突合とジオコーディングを実行
+- geo_logic/core のロジックを利用し、ブラウザから郵便番号/住所突合とジオコーディングを実行
 - GitHub 配置想定:
     - geo_enrichment_streamlit/data/zipcode_localgoverment_mst.xlsx
-    - geo_enrichment_streamlit/geo_logic/geocode_gui_ver2.py
+    - geo_enrichment_streamlit/geo_logic/core.py
     - エントリーポイント: geo_enrichment_streamlit/geocode_streamlit_app.py
 """
 
@@ -17,39 +17,13 @@ from typing import List, Tuple
 import pandas as pd
 import streamlit as st
 
-# パス設定（geo_logic 配下の geocode_gui_ver2 を読み込む）
+# パス設定（geo_logic 配下の core を読み込む）
 BASE_DIR = os.path.dirname(__file__)
 LOGIC_DIR = os.path.join(BASE_DIR, "geo_logic")
 if LOGIC_DIR not in sys.path:
     sys.path.insert(0, LOGIC_DIR)
 
-
-def _patch_tkinter_for_streamlit():
-    """
-    Streamlit Cloud では _tkinter が無いため、GUI部分を使わない前提でダミーを差し込む。
-    geocode_gui_ver2 は関数利用のみで GUI は呼ばない。
-    """
-    import types
-
-    tk_dummy = types.ModuleType("tkinter")
-    tk_dummy.Tk = object
-    tk_dummy.Frame = object
-    tk_dummy.StringVar = object
-    tk_dummy.IntVar = object
-    tk_dummy.BooleanVar = object
-    tk_dummy.Label = object
-    tk_dummy.Entry = object
-    tk_dummy.Button = object
-    tk_dummy.Text = object
-
-    sys.modules.setdefault("tkinter", tk_dummy)
-    sys.modules.setdefault("tkinter.filedialog", types.ModuleType("tkinter.filedialog"))
-    sys.modules.setdefault("tkinter.messagebox", types.ModuleType("tkinter.messagebox"))
-    sys.modules.setdefault("tkinter.ttk", types.ModuleType("tkinter.ttk"))
-
-
-_patch_tkinter_for_streamlit()
-import geocode_gui_ver2 as logic  # noqa: E402
+import core as logic  # noqa: E402
 
 # マスタパスをGitHub内の data に差し替える
 logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.xlsx")
