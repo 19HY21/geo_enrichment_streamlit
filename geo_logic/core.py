@@ -24,7 +24,13 @@ except ImportError:  # API経由などStreamlit無しでも動くように
     st = None
 
 
+# ログ出力は抑止（必要時はこの関数内のreturnを外すなどして一時的に有効化）
+DEBUG_LOG = False
+
+
 def _debug(msg: str):
+    if not DEBUG_LOG:
+        return
     if st is not None:
         st.write(msg)
     else:
@@ -139,6 +145,28 @@ def normalize_address(addr: str) -> str:
     return s.replace("\u3000", "").replace("\n", "").replace("\t", "").replace(" ", "").strip()
 
 
+def _has_paren_ambiguity(addr_norm: str, pref: Optional[str], df_rows: pd.DataFrame, city_norm_override: Optional[str] = None) -> bool:
+    """
+    括弧付きの町域候補が存在し、入力が括弧の前までしか含まない場合は曖昧とみなす。
+    pref: 都道府県名（None の場合は市区町村のみで判定）
+    city_norm_override: 市区町村の正規化済み文字列を直接渡す場合に使用
+    """
+    for _, row in df_rows.iterrows():
+        town = safe_strip(row["町域名(漢字)"])
+        if "(" not in town and "（" not in town:
+            continue
+        town_prefix = re.split(r"[（(]", town)[0]
+        if not town_prefix:
+            continue
+        city_raw = safe_strip(row["市区町村名(漢字)"])
+        city_norm = city_norm_override if city_norm_override is not None else normalize_address(city_raw)
+        prefix_norm = normalize_address(f"{'' if pref is None else pref}{city_raw}{town_prefix}")
+        full_norm = normalize_address(f"{'' if pref is None else pref}{city_raw}{town}")
+        if addr_norm.startswith(prefix_norm) and len(addr_norm) < len(full_norm):
+            return True
+    return False
+
+
 
 def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:
     # 都道府県名は通常住所先頭に付くため、前方一致で判定する（部分一致だと「東京都府中市」で京都府を誤検出する）
@@ -219,6 +247,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
 
         # 入力に含まれる町域の最長一致を採用（入力が短い町域候補が存在する場合は曖昧として町域なし）
         ambiguous_prefix = False
+        paren_ambiguous = _has_paren_ambiguity(addr_norm, pref, df_pref_sorted)
         best_row = None
         best_len = 0
         for _, row in df_pref_sorted.iterrows():
@@ -235,7 +264,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                 if len(full_norm) > best_len:
                     best_len = len(full_norm)
                     best_row = row
-        if best_row is not None:
+        if best_row is not None and not paren_ambiguous:
             result.update({
                 "地方コード": best_row.get("地方コード", result.get("地方コード")),
                 "地方名": best_row.get("地方名", result.get("地方名")),
@@ -249,7 +278,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             return result, idx_used, match_flag
         else:
             _debug(f"[addr_match_debug] town_not_found_pref addr_norm={addr_norm}")
-        if ambiguous_prefix:
+        if paren_ambiguous or ambiguous_prefix:
             return result, None, "pref_city"
 
         # 市区町村一致
