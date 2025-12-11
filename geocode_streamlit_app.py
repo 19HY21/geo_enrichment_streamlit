@@ -51,14 +51,14 @@ def _run_pipeline(
     addr_cols: List[str],
     xls_for_copy: pd.ExcelFile,
     log_box,
+    addr_dl_box,
+    geo_dl_box,
     base_name: str,
     batch_size: int,
     geocode_enabled: bool = True,
     uploaded_cache: dict | None = None,
 ):
     st.session_state["logs"] = []
-    st.session_state["addr_chunk_downloads"] = []
-    st.session_state["geo_chunk_downloads"] = []
     progress = st.progress(0)
     status = st.empty()
 
@@ -136,10 +136,16 @@ def _run_pipeline(
             chunk_path = os.path.join(chunk_dir, chunk_fname)
             chunk.to_parquet(chunk_path, index=False)
             try:
-                with open(chunk_path, "rb") as f:
-                    st.session_state["addr_chunk_downloads"].append(
-                        {"label": f"住所チャンク {start+1}-{end} (Parquet)", "data": f.read(), "name": chunk_fname}
-                    )
+                buf = io.BytesIO()
+                chunk.to_parquet(buf, index=False)
+                buf.seek(0)
+                addr_dl_box.download_button(
+                    label=f"住所チャンク {start+1}-{end} をダウンロード (Parquet)",
+                    data=buf.getvalue(),
+                    file_name=chunk_fname,
+                    mime="application/octet-stream",
+                    key=f"addr_chunk_{start}_{end}",
+                )
             except Exception:
                 pass
             processed = end
@@ -205,8 +211,12 @@ def _run_pipeline(
                 geo_bytes = io.BytesIO()
                 geo_df.to_parquet(geo_bytes, index=False)
                 geo_bytes.seek(0)
-                st.session_state["geo_chunk_downloads"].append(
-                    {"label": f"ジオコードチャンク {start+1}-{end} (Parquet)", "data": geo_bytes.getvalue(), "name": geo_chunk_fname}
+                geo_dl_box.download_button(
+                    label=f"ジオコードチャンク {start+1}-{end} をダウンロード (Parquet)",
+                    data=geo_bytes.getvalue(),
+                    file_name=geo_chunk_fname,
+                    mime="application/octet-stream",
+                    key=f"geo_chunk_{start}_{end}",
                 )
             except Exception:
                 pass
@@ -309,9 +319,11 @@ def main():
     )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
-    log_box = st.empty()
     result_placeholder = st.empty()
     download_cache_placeholder = st.empty()
+
+    addr_dl_box = st.container()
+    geo_dl_box = st.container()
 
     if uploaded:
         file_kind, df_input, xls_for_copy, sheet_name, base_name = _load_input(uploaded)
@@ -329,11 +341,11 @@ def main():
         if cache_uploader:
             try:
                 uploaded_cache = json.load(io.BytesIO(cache_uploader.read()))
-                _log(log_box, f"キャッシュJSON読込: {len(uploaded_cache)}件")
             except Exception:
-                _log(log_box, "キャッシュJSONの読込に失敗しました")
+                st.warning("キャッシュJSONの読込に失敗しました")
 
         if st.button("実行"):
+            log_box = st.empty()
             buf, fname, df_out, cache_path = _run_pipeline(
                 df_input=df_input,
                 sheet_name=sheet_name,
@@ -342,6 +354,8 @@ def main():
                 addr_cols=addr_cols,
                 xls_for_copy=xls_for_copy,
                 log_box=log_box,
+                addr_dl_box=addr_dl_box,
+                geo_dl_box=geo_dl_box,
                 base_name=base_name,
                 batch_size=BATCH_SIZE_DEFAULT,
                 geocode_enabled=geocode_enabled,
