@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Geo Enrichment Tool (Streamlit版)
-- geo_logic/core のロジックを利用し、ブラウザから郵便番号/住所突合とジオコーディングを実行
-- GitHub 配置想定:
-    - geo_enrichment_streamlit/data/zipcode_localgoverment_mst.xlsx
-    - geo_enrichment_streamlit/geo_logic/core.py
-    - エントリーポイント: geo_enrichment_streamlit/geocode_streamlit_app.py
+Geo Enrichment Tool (Streamlit)
+- geo_logic/core を利用し、ブラウザから郵便番号/住所突合とジオコーディングを実行
+- Streamlit Cloud でも動くように最小限のメモリで動作するよう調整
 """
 
 import io
@@ -17,17 +14,16 @@ from typing import List, Tuple
 import pandas as pd
 import streamlit as st
 
-# パス設定（geo_logic をパッケージとして読み込む）
 BASE_DIR = os.path.dirname(__file__)
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from geo_logic import core as logic  # noqa: E402
 
-# マスタパスをGitHub内の data に差し替える
+# マスタパスをリポジトリ内 data に固定
 logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.xlsx")
 
-# 利用する関数・定数を束ねる
+# 利用関数
 CACHE_DIR = logic.CACHE_DIR
 OUTPUT_SUFFIX = logic.OUTPUT_SUFFIX
 BATCH_SIZE_DEFAULT = 5000
@@ -42,7 +38,6 @@ normalize_address = logic.normalize_address
 
 
 def _log(log_box, msg: str):
-    """ログをテキストで追記表示する。"""
     logs = st.session_state.setdefault("logs", [])
     logs.append(msg)
     log_box.write("\n".join(logs))
@@ -61,20 +56,13 @@ def _run_pipeline(
     geocode_enabled: bool = True,
     uploaded_cache: dict | None = None,
 ):
-    """突合〜ジオコーディング〜出力データ生成を実行。"""
     st.session_state["logs"] = []
     progress = st.progress(0)
     status = st.empty()
 
-    # フェーズ別の重みを設定（有効なフェーズのみで正規化）
-    weights = {
-        "zip": 20,
-        "addr": 20,
-        "geo": 55,
-        "out": 5,
-    }
-    enabled_phases = []
-    enabled_phases.append("zip")
+    # フェーズの重み
+    weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
+    enabled_phases = ["zip"]
     if addr_cols:
         enabled_phases.append("addr")
     if addr_cols and geocode_enabled:
@@ -83,7 +71,6 @@ def _run_pipeline(
     total_weight = sum(weights[p] for p in enabled_phases)
 
     def set_progress(phase: str, pct: float, text: str):
-        # pct: 0-100
         offset = 0
         for p in ["zip", "addr", "geo", "out"]:
             if p == phase:
@@ -102,10 +89,10 @@ def _run_pipeline(
 
     _log(log_box, "マスタ読込開始")
     master_df = read_master()
-    _log(log_box, f"マスタ読込完了")
+    _log(log_box, "マスタ読込完了")
     _log(log_box, f"入力件数: {len(df_input)} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}")
 
-    # 必要列のみを処理用に抽出しメモリを節約
+    # 必要列のみ抽出
     cols_needed = list(dict.fromkeys(zip_cols + addr_cols))
     df_work = df_input[cols_needed].copy() if cols_needed else df_input.copy()
     used_zip_codes = set()
@@ -125,18 +112,17 @@ def _run_pipeline(
         prog_bar("zip", 100, "[郵便番号] 完了")
         _log(log_box, f"郵便番号突合完了 使用郵便番号: {len(used_zip_codes)}件")
 
-    # 住所突合
+    # 住所突合（チャンク＋オンディスク保存）
     if addr_cols:
         _log(log_box, f"住所突合開始: {addr_cols}")
         prog_bar("addr", 0, "[addr] 処理開始")
-
-        # チャンク処理でメモリ負荷を抑える（処理済みチャンクをローカル保存）
         chunk_size = 1000
         addr_chunks = []
         total_rows = len(df_work)
         processed = 0
         chunk_dir = os.path.join(CACHE_DIR, "addr_chunks")
         os.makedirs(chunk_dir, exist_ok=True)
+
         for start in range(0, total_rows, chunk_size):
             end = min(start + chunk_size, total_rows)
             chunk = df_work.iloc[start:end].copy()
@@ -144,20 +130,19 @@ def _run_pipeline(
                 chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
             )
             addr_chunks.append(chunk)
-            # チャンク結果をローカルに保存（後で再利用や検証用）
             chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1}_{end}.parquet"
             chunk_path = os.path.join(chunk_dir, chunk_fname)
             chunk.to_parquet(chunk_path, index=False)
             processed = end
             pct = processed / max(total_rows, 1) * 100
             prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
-            _log(log_box, f"[addr] chunk {start+1}-{end} 完了 保存: {chunk_path}")
+            _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
 
         df_work = pd.concat(addr_chunks).sort_index()
         prog_bar("addr", 100, "[addr] 完了")
         _log(log_box, f"住所突合完了 使用行: {len(used_master_idx)}件")
 
-    # ジオコーディング（キャッシュはローカル使用）
+    # ジオコーディング
     os.makedirs(CACHE_DIR, exist_ok=True)
     local_cache_path = os.path.join(CACHE_DIR, "streamlit_local_cache.json")
     cache = load_cache(local_cache_path)
@@ -165,6 +150,7 @@ def _run_pipeline(
         cache.update(uploaded_cache)
     _log(log_box, f"キャッシュ読込: ローカル{len(cache)}件")
 
+    geo_results = {}
     if addr_cols and geocode_enabled:
         _log(log_box, "ジオコーディング開始（ユニーク住所ベース）")
         prog_bar("geo", 0, "[geo] 処理開始")
@@ -175,21 +161,17 @@ def _run_pipeline(
         total_unique = len(unique_addrs)
         _log(log_box, f"ユニーク住所数: {total_unique}件 / バッチサイズ: {batch_size}")
 
-        geo_results = {}
         overall_done = 0
-
         for start in range(0, total_unique, batch_size):
             end = min(start + batch_size, total_unique)
             chunk = unique_addrs[start:end]
 
             def geo_prog(done, total, kind):
-                # ジオコーディング進捗コールバック
                 now_done = overall_done + done
                 pct = now_done / max(total_unique, 1) * 100
                 prog_bar("geo", pct, f"[geo] {now_done}/{total_unique} ({pct:.1f}%)")
 
             def geo_cache_save(c):
-                # ジオコーディングキャッシュ保存コールバック
                 save_cache(local_cache_path, c)
 
             _log(log_box, f"バッチ処理: {start+1}〜{end}件目")
@@ -206,24 +188,19 @@ def _run_pipeline(
             _log(log_box, f"バッチ完了 cache_hit={cache_hit} 新規={new_count} 累計={overall_done}/{total_unique}")
 
     df_work = add_geocode_columns(df_work, addr_cols, geo_results)
-    else:
+    if not (addr_cols and geocode_enabled):
         _log(log_box, "ジオコーディングはスキップ（住所未選択または緯度経度付与オフ）")
 
-    # ジオコーディングを実行した場合のみキャッシュを保存（ダウンロード可）
     if geocode_enabled and addr_cols:
         save_cache(local_cache_path, cache)
 
-
-    # 出力生成
+    # 出力生成（元データに突合結果をマージ）
     out_base = base_name or "output"
+    df_out_merge = df_input.copy()
+    for col in df_work.columns:
+        df_out_merge[col] = df_work[col]
+
     if file_kind == "excel":
-        # 元の入力に突合結果を統合して出力
-        df_out_merge = df_input.copy()
-        for col in df_work.columns:
-            if col in df_out_merge.columns:
-                df_out_merge[col] = df_work[col]
-            else:
-                df_out_merge[col] = df_work[col]
         buf = _build_excel_output(
             xls_for_copy, sheet_name, df_input, df_out_merge, master_df, used_zip_codes, used_master_idx
         )
@@ -235,7 +212,7 @@ def _run_pipeline(
     prog_bar("out", 50, "[out] 生成中")
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar("out", 100, "完了")
-    return buf, fname, df_work, local_cache_path
+    return buf, fname, df_out_merge, local_cache_path
 
 
 def _build_excel_output(
@@ -247,7 +224,6 @@ def _build_excel_output(
     used_zip_codes: set,
     used_master_idx: set,
 ):
-    """Excel出力をBytesIOに作成。"""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         for name in xls.sheet_names:
@@ -277,7 +253,6 @@ def _build_excel_output(
 
 
 def _build_csv_output(processed_df: pd.DataFrame):
-    # CSV出力をBytesIOに作成。
     buf = io.BytesIO()
     processed_df.to_csv(buf, index=False, encoding="utf-8-sig")
     buf.seek(0)
@@ -285,20 +260,22 @@ def _build_csv_output(processed_df: pd.DataFrame):
 
 
 def _load_input(uploaded_file) -> Tuple[str, pd.DataFrame, pd.ExcelFile, str, str]:
-    """アップロードファイルを読み込み、種別/df/xls/シート名を返す。"""
-    name = uploaded_file.name
-    lower = name.lower()
-    if lower.endswith(".csv"):
-        df = pd.read_csv(uploaded_file, dtype=str)
-        return name, df, None, "csv", "data"
-    xls = pd.ExcelFile(uploaded_file)
-    sheet = st.selectbox("Excelシートを選択", xls.sheet_names)
-    df = pd.read_excel(xls, sheet_name=sheet, dtype=str)
-    return name, df, xls, "excel", sheet
+    file_bytes = uploaded_file.read()
+    file_kind = "excel" if uploaded_file.name.lower().endswith(("xlsx", "xls")) else "csv"
+    if file_kind == "excel":
+        xls = pd.ExcelFile(io.BytesIO(file_bytes))
+        sheet = xls.sheet_names[0]
+        df = xls.parse(sheet, dtype=str)
+        sheet_name = sheet
+    else:
+        xls = None
+        sheet_name = "data"
+        df = pd.read_csv(io.BytesIO(file_bytes), dtype=str)
+    base_name = os.path.splitext(uploaded_file.name)[0]
+    return file_kind, df, xls, sheet_name, base_name
 
 
 def main():
-    # Streamlitアプリ本体
     st.set_page_config(page_title="Geo Enrichment Tool", layout="wide")
     st.title("Geo Enrichment Tool")
     st.caption(
@@ -306,79 +283,56 @@ def main():
     )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
-    if uploaded is None:
-        st.info("入力ファイルを選択してください。")
-        st.stop()
+    geocode_enabled = st.checkbox("緯度経度を付与する", value=False)
+    cache_uploader = st.file_uploader("キャッシュJSONをアップロード（任意）", type=["json"])
 
-    file_name, df_input, xls, kind, sheet_name = _load_input(uploaded)
-    base_name = os.path.splitext(file_name)[0]
-    st.success(f"読み込み完了: {file_name} / {df_input.shape}")
-    st.dataframe(df_input.head())
-
-    cols = df_input.columns.tolist()
-    zip_cols = st.multiselect("郵便番号列を選択（複数可）", cols)
-    addr_cols = st.multiselect("住所列を選択（複数可）", cols)
-    geocode_enabled = st.checkbox("緯度経度を付与する", value=True)
-    cache_upload = st.file_uploader("キャッシュJSONをアップロード（任意）", type=["json"])
-
-    st.markdown("#### ログ")
     log_box = st.empty()
+    result_placeholder = st.empty()
+    download_cache_placeholder = st.empty()
 
-    if st.button("実行"):
-        with st.spinner("処理中..."):
-            uploaded_cache = None
-            if cache_upload is not None:
-                try:
-                    raw = json.load(cache_upload)
-                    uploaded_cache = {k: tuple(v) if isinstance(v, list) else tuple(v) for k, v in raw.items()}
-                except Exception:
-                    st.warning("キャッシュJSONの読み込みに失敗しました。無視して続行します。")
+    if uploaded:
+        file_kind, df_input, xls_for_copy, sheet_name, base_name = _load_input(uploaded)
+        zip_cols = st.multiselect("郵便番号列を選択", options=df_input.columns.tolist())
+        addr_cols = st.multiselect("住所列を選択", options=df_input.columns.tolist())
+        batch_size = st.number_input("ジオコーディングのバッチサイズ", min_value=100, max_value=20000, value=BATCH_SIZE_DEFAULT, step=100)
+        uploaded_cache = None
+        if cache_uploader:
+            try:
+                uploaded_cache = json.load(io.BytesIO(cache_uploader.read()))
+                _log(log_box, f"キャッシュJSON読込: {len(uploaded_cache)}件")
+            except Exception:
+                _log(log_box, "キャッシュJSONの読込に失敗しました")
+
+        if st.button("実行"):
             buf, fname, df_out, cache_path = _run_pipeline(
-                df_input,
-                sheet_name,
-                kind,
-                zip_cols,
-                addr_cols,
-                xls,
-                log_box,
-                base_name,
-                batch_size=BATCH_SIZE_DEFAULT,
+                df_input=df_input,
+                sheet_name=sheet_name,
+                file_kind=file_kind,
+                zip_cols=zip_cols,
+                addr_cols=addr_cols,
+                xls_for_copy=xls_for_copy,
+                log_box=log_box,
+                base_name=base_name,
+                batch_size=batch_size,
                 geocode_enabled=geocode_enabled,
                 uploaded_cache=uploaded_cache,
             )
-            st.session_state["last_output"] = {
-                "buf": buf.getvalue(),
-                "fname": fname,
-                "df_head": df_out.head(),
-                "cache_path": cache_path,
-            }
-        st.success("処理完了")
 
-    # 前回実行結果を常に表示し、ダウンロードも保持（チェックボックス方式）
-    if "last_output" in st.session_state:
-        lo = st.session_state["last_output"]
-        st.markdown("#### 出力データサンプル")
-        if lo.get("df_head") is not None:
-            st.dataframe(lo["df_head"])
-
-        st.download_button(
-            "結果データをダウンロード",
-            data=lo["buf"],
-            file_name=lo["fname"],
-            mime="application/octet-stream",
-            key="download_data",
-        )
-
-        if lo.get("cache_path") and os.path.exists(lo["cache_path"]):
-            with open(lo["cache_path"], "rb") as f:
-                cache_bytes = f.read()
-            st.download_button(
-                "キャッシュJSONをダウンロード（次回再利用用）",
-                data=cache_bytes,
-                file_name=os.path.basename(lo["cache_path"]),
-                mime="application/json",
-                key="download_cache",
+            result_placeholder.download_button(
+                label="結果データをダウンロード",
+                data=buf,
+                file_name=fname,
+                mime="application/octet-stream",
             )
+
+            if os.path.exists(cache_path):
+                with open(cache_path, "rb") as f:
+                    download_cache_placeholder.download_button(
+                        label="キャッシュJSONをダウンロード（次回再利用用）",
+                        data=f.read(),
+                        file_name=os.path.basename(cache_path),
+                        mime="application/json",
+                    )
 
 
 if __name__ == "__main__":
