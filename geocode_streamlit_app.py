@@ -130,11 +130,13 @@ def _run_pipeline(
         _log(log_box, f"住所突合開始: {addr_cols}")
         prog_bar("addr", 0, "[addr] 処理開始")
 
-        # チャンク処理でメモリ負荷を抑える
+        # チャンク処理でメモリ負荷を抑える（処理済みチャンクをローカル保存）
         chunk_size = 1000
         addr_chunks = []
         total_rows = len(df_work)
         processed = 0
+        chunk_dir = os.path.join(CACHE_DIR, "addr_chunks")
+        os.makedirs(chunk_dir, exist_ok=True)
         for start in range(0, total_rows, chunk_size):
             end = min(start + chunk_size, total_rows)
             chunk = df_work.iloc[start:end].copy()
@@ -142,10 +144,14 @@ def _run_pipeline(
                 chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
             )
             addr_chunks.append(chunk)
+            # チャンク結果をローカルに保存（後で再利用や検証用）
+            chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1}_{end}.parquet"
+            chunk_path = os.path.join(chunk_dir, chunk_fname)
+            chunk.to_parquet(chunk_path, index=False)
             processed = end
             pct = processed / max(total_rows, 1) * 100
             prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
-            _log(log_box, f"[addr] chunk {start+1}-{end} 完了")
+            _log(log_box, f"[addr] chunk {start+1}-{end} 完了 保存: {chunk_path}")
 
         df_work = pd.concat(addr_chunks).sort_index()
         prog_bar("addr", 100, "[addr] 完了")
