@@ -212,6 +212,9 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             city = safe_strip(row["市区町村名(漢字)"])
             town = safe_strip(row["町域名(漢字)"])
             full_norm = normalize_address(f"{pref}{city}{town}")
+            # デバッグ: 特定住所のマスタ候補確認
+            if any(key in addr_norm for key in ["箕沖町", "長崎", "荒井町新浜"]):
+                print(f"[addr_match_debug] cand_pref addr_norm={addr_norm} full_norm={full_norm} len(addr)={len(addr_norm)} len(full)={len(full_norm)}")
             if full_norm and addr_norm.startswith(full_norm):
                 if len(addr_norm) < len(full_norm):
                     ambiguous_prefix = True
@@ -284,6 +287,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                 for _, row in df_city.iterrows():
                     town = safe_strip(row["町域名(漢字)"])
                     target = f"{city_norm}{normalize_address(town)}"
+                    if any(key in addr_norm for key in ["箕沖町", "長崎", "荒井町新浜"]):
+                        print(f"[addr_match_debug] cand_no_pref addr_norm={addr_norm} target={target} len(addr)={len(addr_norm)} len(target)={len(target)}")
                     if target and addr_norm.startswith(target):
                         if len(addr_norm) < len(target):
                             ambiguous_prefix = True
