@@ -17,24 +17,6 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 
-# Streamlit がある場合のみデバッグ出力に利用する
-try:
-    import streamlit as st
-except ImportError:  # API経由などStreamlit無しでも動くように
-    st = None
-
-
-# ログ出力は抑止（必要時はこの関数内のreturnを外すなどして一時的に有効化）
-DEBUG_LOG = False
-
-
-def _debug(msg: str):
-    if not DEBUG_LOG:
-        return
-    if st is not None:
-        st.write(msg)
-    else:
-        print(msg)
 
 # 定数定義
 BASE_DIR = os.path.dirname(__file__)
