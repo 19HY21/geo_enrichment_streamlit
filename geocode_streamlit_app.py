@@ -17,13 +17,12 @@ from typing import List, Tuple
 import pandas as pd
 import streamlit as st
 
-# パス設定（geo_logic 配下の core を読み込む）
+# パス設定（geo_logic をパッケージとして読み込む）
 BASE_DIR = os.path.dirname(__file__)
-LOGIC_DIR = os.path.join(BASE_DIR, "geo_logic")
-if LOGIC_DIR not in sys.path:
-    sys.path.insert(0, LOGIC_DIR)
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
-import core as logic  # noqa: E402
+from geo_logic import core as logic  # noqa: E402
 
 # マスタパスをGitHub内の data に差し替える
 logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.xlsx")
