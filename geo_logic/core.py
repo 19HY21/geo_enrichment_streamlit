@@ -126,20 +126,6 @@ def normalize_address(addr: str) -> str:
     return s.replace("\u3000", "").replace("\n", "").replace("\t", "").replace(" ", "").strip()
 
 
-def _has_town_boundary(addr_norm: str, prefix_len: int) -> bool:
-    """
-    町域が前方一致した後、番地などの区切りで終わっているかを判定する。
-    """
-    if len(addr_norm) == prefix_len:
-        return True
-    next_char = addr_norm[prefix_len]
-    boundary_chars = {"-", "ー", "−", "－", "―", "‐", "の", "丁", "号", "番", "地"}
-    if next_char.isdigit():
-        return True
-    if next_char in boundary_chars:
-        return True
-    return False
-
 
 def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:
     # 都道府県名は通常住所先頭に付くため、前方一致で判定する（部分一致だと「東京都府中市」で京都府を誤検出する）
@@ -216,28 +202,32 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         df_pref_sorted = df_pref_sorted.sort_values("len_city_town", ascending=False)
 
         # 完全一致（町域がマスタ候補より短い場合は曖昧とみなし町域なしで打ち切り）
-        ambiguous_prefix = False
+        # 入力に含まれる町域の最長一致を採用（入力が短い場合は町域なし）
+        best_row = None
+        best_len = 0
         for _, row in df_pref_sorted.iterrows():
             city = safe_strip(row["市区町村名(漢字)"])
             town = safe_strip(row["町域名(漢字)"])
             full_norm = normalize_address(f"{pref}{city}{town}")
             if full_norm and addr_norm.startswith(full_norm):
                 if len(addr_norm) < len(full_norm):
-                    ambiguous_prefix = True
+                    # 入力が町域より短い場合は曖昧なのでスキップ
                     continue
-                result.update({
-                    "地方コード": row.get("地方コード", result.get("地方コード")),
-                    "地方名": row.get("地方名", result.get("地方名")),
-                    "団体コード": row["団体コード"],
-                    "市区町村名(漢字)": row["市区町村名(漢字)"],
-                    "政令指定都市フラグ": row["政令指定都市フラグ"],
-                    "町域名(漢字)": row["町域名(漢字)"],
-                })
-                idx_used = row.name
-                match_flag = "pref_city_town"
-                return result, idx_used, match_flag
-        if ambiguous_prefix:
-            return result, None, "pref_city"
+                if len(full_norm) > best_len:
+                    best_len = len(full_norm)
+                    best_row = row
+        if best_row is not None:
+            result.update({
+                "地方コード": best_row.get("地方コード", result.get("地方コード")),
+                "地方名": best_row.get("地方名", result.get("地方名")),
+                "団体コード": best_row["団体コード"],
+                "市区町村名(漢字)": best_row["市区町村名(漢字)"],
+                "政令指定都市フラグ": best_row["政令指定都市フラグ"],
+                "町域名(漢字)": best_row["町域名(漢字)"],
+            })
+            idx_used = best_row.name
+            match_flag = "pref_city_town"
+            return result, idx_used, match_flag
 
         # 市区町村一致
         for _, row in df_pref_sorted.iterrows():
@@ -280,29 +270,31 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         for city_norm, df_city in city_groups.items():
             # 部分一致だと「中央区」で別の都府県に誤ヒットするため前方一致のみ
             if city_norm and addr_norm.startswith(city_norm):
-                ambiguous_prefix = False
+                best_row = None
+                best_len = 0
                 for _, row in df_city.iterrows():
                     town = safe_strip(row["町域名(漢字)"])
                     target = f"{city_norm}{normalize_address(town)}"
                     if target and addr_norm.startswith(target):
                         if len(addr_norm) < len(target):
-                            ambiguous_prefix = True
                             continue
-                        result.update({
-                            "地方コード": row.get("地方コード"),
-                            "地方名": row.get("地方名"),
-                            "都道府県コード": row["都道府県コード"],
-                            "都道府県名(漢字)": row["都道府県名(漢字)"],
-                            "団体コード": row["団体コード"],
-                            "市区町村名(漢字)": row["市区町村名(漢字)"],
-                            "政令指定都市フラグ": row["政令指定都市フラグ"],
-                            "町域名(漢字)": row["町域名(漢字)"],
-                        })
-                        idx_used = row.name
-                        match_flag = "no_pref_city_town"
-                        return result, idx_used, match_flag
-                if ambiguous_prefix:
-                    return result, None, "no_pref_city"
+                        if len(target) > best_len:
+                            best_len = len(target)
+                            best_row = row
+                if best_row is not None:
+                    result.update({
+                        "地方コード": best_row.get("地方コード"),
+                        "地方名": best_row.get("地方名"),
+                        "都道府県コード": best_row["都道府県コード"],
+                        "都道府県名(漢字)": best_row["都道府県名(漢字)"],
+                        "団体コード": best_row["団体コード"],
+                        "市区町村名(漢字)": best_row["市区町村名(漢字)"],
+                        "政令指定都市フラグ": best_row["政令指定都市フラグ"],
+                        "町域名(漢字)": best_row["町域名(漢字)"],
+                    })
+                    idx_used = best_row.name
+                    match_flag = "no_pref_city_town"
+                    return result, idx_used, match_flag
                 # 町域は不明だが市区町村が一意
                 row = df_city.iloc[0]
                 result.update({
@@ -550,23 +542,6 @@ def geocode_addresses(addresses: List[str], user_agent: str, cache: Dict[str, Tu
 def add_geocode_columns(df: pd.DataFrame, addr_cols: List[str], results: Dict[str, Tuple[Optional[float], Optional[float], str]]) -> pd.DataFrame:
     out = df.copy()
 
-    def normalize_flag(flag: Optional[str]) -> Optional[str]:
-        mapping = {
-            "完全一致": "full",
-            "full": "full",
-            "丁目": "town",
-            "町": "town",
-            "村": "town",
-            "town": "town",
-            "市": "city",
-            "区": "city",
-            "city": "city",
-            "pref": "pref",
-            "not_found": "not_found",
-            None: None,
-        }
-        return mapping.get(flag, flag)
-
     for col in addr_cols:
         lat_col = f"{col}_lat"
         lon_col = f"{col}_lon"
@@ -582,5 +557,5 @@ def add_geocode_columns(df: pd.DataFrame, addr_cols: List[str], results: Dict[st
             if res:
                 out.at[idx, lat_col] = res[0]
                 out.at[idx, lon_col] = res[1]
-                out.at[idx, flag_col] = normalize_flag(res[2])
+                out.at[idx, flag_col] = res[2]
     return out
