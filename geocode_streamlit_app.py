@@ -99,10 +99,7 @@ def _run_pipeline(
     master_df = read_master()
     _log(log_box, "マスタ読込完了")
     total_rows_all = len(df_input)
-    if process_mask is not None:
-        df_proc_in = df_input.loc[process_mask].copy()
-    else:
-        df_proc_in = df_input.copy()
+    df_proc_in = df_input.copy() if process_mask is None else df_input.loc[process_mask].copy()
     _log(log_box, f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}")
 
     # 必要列のみ抽出
@@ -110,6 +107,25 @@ def _run_pipeline(
     df_work = df_proc_in[cols_needed].copy() if cols_needed else df_proc_in.copy()
     used_zip_codes = set()
     used_master_idx = set()
+
+    # 全行がParquet由来などで処理対象が無い場合はそのまま出力を返す
+    if df_work.empty:
+        _log(log_box, "処理対象の行がありません（全件Parquet由来など）。")
+        out_base = base_name or "output"
+        df_out_merge = df_input.copy()
+        for helper_col in ["__merge_key", "__is_parquet"]:
+            if helper_col in df_out_merge.columns:
+                df_out_merge = df_out_merge.drop(columns=[helper_col])
+        df_input_clean = df_input.drop(columns=["__merge_key", "__is_parquet"], errors="ignore")
+        if file_kind == "excel" and xls_for_copy is not None:
+            buf = _build_excel_output(
+                xls_for_copy, sheet_name, df_input_clean, df_out_merge, read_master(), set(), set()
+            )
+            fname = f"{out_base}{OUTPUT_SUFFIX}.xlsx"
+        else:
+            buf = _build_csv_output(df_out_merge)
+            fname = f"{out_base}{OUTPUT_SUFFIX}.csv"
+        return buf, fname, df_out_merge, os.path.join(CACHE_DIR, "streamlit_local_cache.json")
 
     # 郵便番号突合
     if zip_cols:
@@ -431,11 +447,13 @@ def main():
                 pq_df = pq_df[pq_df["_merge_key"] != ""]
                 base_df = base_df.set_index("_merge_key")
                 pq_df = pq_df.set_index("_merge_key")
-                merged = pq_df.combine_first(base_df)
+                # ベースに存在するキーのみParquetで上書き（ベースにないキーは無視）
+                pq_df_filtered = pq_df.loc[pq_df.index.intersection(base_df.index)]
+                merged = pq_df_filtered.combine_first(base_df)
                 len_base = len(base_df)
-                len_pq = len(pq_df)
+                len_pq = len(pq_df_filtered)
                 len_merged = len(merged)
-                parquet_keys_set = set(pq_df.index)
+                parquet_keys_set = set(pq_df_filtered.index)
                 merged = merged.reset_index()
                 # インデックス名が index または _merge_key のどちらでも __merge_key に揃える
                 merged = merged.rename(columns={"index": "__merge_key", "_merge_key": "__merge_key"})
@@ -455,9 +473,7 @@ def main():
                 else:
                     st.info(msg + " （行数変化なし）")
                 process_mask = None
-                if "__is_parquet" in df_input:
-                    process_mask = ~df_input["__is_parquet"]
-                    chunk_offset = int(df_input["__is_parquet"].sum())
+                chunk_offset = 0
 
         run_clicked = st.button("実行 / 再実行", type="primary")
 
