@@ -17,6 +17,19 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 
+# Streamlit がある場合のみデバッグ出力に利用する
+try:
+    import streamlit as st
+except ImportError:  # API経由などStreamlit無しでも動くように
+    st = None
+
+
+def _debug(msg: str):
+    if st is not None:
+        st.write(msg)
+    else:
+        print(msg)
+
 # 定数定義
 BASE_DIR = os.path.dirname(__file__)
 MASTER_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "zipcode_localgoverment_mst.xlsx"))
@@ -182,7 +195,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         return None
 
     # デバッグ用に正規化後の住所をログ出力
-    print(f"[addr_match_debug] addr_norm={addr_norm}")
+    _debug(f"[addr_match_debug] addr_norm={addr_norm}")
 
     result: Dict[str, Optional[str]] = {col: None for col in MASTER_COLUMNS_ADDR}
     idx_used: Optional[int] = None
@@ -214,7 +227,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             full_norm = normalize_address(f"{pref}{city}{town}")
             # デバッグ: 特定住所のマスタ候補確認
             if any(key in addr_norm for key in ["箕沖町", "長崎", "荒井町新浜"]):
-                print(f"[addr_match_debug] cand_pref addr_norm={addr_norm} full_norm={full_norm} len(addr)={len(addr_norm)} len(full)={len(full_norm)}")
+                _debug(f"[addr_match_debug] cand_pref addr_norm={addr_norm} full_norm={full_norm} len(addr)={len(addr_norm)} len(full)={len(full_norm)}")
             if full_norm and addr_norm.startswith(full_norm):
                 if len(addr_norm) < len(full_norm):
                     ambiguous_prefix = True
@@ -235,8 +248,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             match_flag = "pref_city_town"
             return result, idx_used, match_flag
         else:
-            # デバッグ: 町域が見つからなかった
-            print(f"[addr_match_debug] town_not_found_pref addr_norm={addr_norm}")
+                    # デバッグ: 町域が見つからなかった
+                    _debug(f"[addr_match_debug] town_not_found_pref addr_norm={addr_norm}")
         if ambiguous_prefix:
             return result, None, "pref_city"
 
@@ -288,7 +301,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                     town = safe_strip(row["町域名(漢字)"])
                     target = f"{city_norm}{normalize_address(town)}"
                     if any(key in addr_norm for key in ["箕沖町", "長崎", "荒井町新浜"]):
-                        print(f"[addr_match_debug] cand_no_pref addr_norm={addr_norm} target={target} len(addr)={len(addr_norm)} len(target)={len(target)}")
+                        _debug(f"[addr_match_debug] cand_no_pref addr_norm={addr_norm} target={target} len(addr)={len(addr_norm)} len(target)={len(target)}")
                     if target and addr_norm.startswith(target):
                         if len(addr_norm) < len(target):
                             ambiguous_prefix = True
@@ -312,7 +325,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                     return result, idx_used, match_flag
                 else:
                     # デバッグ: 町域が見つからなかった（都道府県なし系）
-                    print(f"[addr_match_debug] town_not_found_no_pref addr_norm={addr_norm}")
+                    _debug(f"[addr_match_debug] town_not_found_no_pref addr_norm={addr_norm}")
                 if ambiguous_prefix:
                     return result, None, "no_pref_city"
                 # 町域は不明だが市区町村が一意
