@@ -149,7 +149,8 @@ def _has_paren_ambiguity(addr_norm: str, pref: Optional[str], df_rows: pd.DataFr
         city_norm = city_norm_override if city_norm_override is not None else normalize_address(city_raw)
         prefix_norm = normalize_address(f"{'' if pref is None else pref}{city_raw}{town_prefix}")
         full_norm = normalize_address(f"{'' if pref is None else pref}{city_raw}{town}")
-        if addr_norm.startswith(prefix_norm) and len(addr_norm) < len(full_norm):
+        # 入力が括弧前まで一致し、括弧以降を含まない場合は曖昧とみなす
+        if addr_norm.startswith(prefix_norm) and not addr_norm.startswith(full_norm):
             return True
     return False
 
