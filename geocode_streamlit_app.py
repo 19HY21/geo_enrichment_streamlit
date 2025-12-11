@@ -455,6 +455,11 @@ def main():
                 pq_df = pq_df[pq_df["_merge_key"] != ""]
                 pq_df = pq_df.drop_duplicates("_merge_key", keep="first")
 
+                # Parquet側にある列をベースにも追加しておく（突合済み列を落とさないため）
+                for col in pq_df.columns:
+                    if col not in base_df.columns:
+                        base_df[col] = None
+
                 base_df = base_df.set_index("_merge_key")
                 pq_df = pq_df.set_index("_merge_key")
 
