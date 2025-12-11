@@ -321,6 +321,7 @@ def main():
     )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
+    parquet_uploader = st.file_uploader("突合済みParquetをアップロード（任意）", type=["parquet"], key="parquet_uploader")
     result_placeholder = st.empty()
     download_cache_placeholder = st.empty()
 
@@ -332,12 +333,25 @@ def main():
     st.session_state.setdefault("result_file", None)
     st.session_state.setdefault("cache_file", None)
 
-    if uploaded:
-        file_kind, df_input, xls_for_copy, sheet_name, base_name = _load_input(uploaded)
-        # シート名選択（Excelのみ）
-        if file_kind == "excel" and xls_for_copy is not None:
-            sheet_name = st.selectbox("シート名を選択", options=xls_for_copy.sheet_names, index=0)
-            df_input = xls_for_copy.parse(sheet_name, dtype=str)
+    if uploaded or parquet_uploader:
+        df_parquet = None
+        parquet_base_name = None
+        if parquet_uploader:
+            file_bytes = parquet_uploader.read()
+            df_parquet = pd.read_parquet(io.BytesIO(file_bytes))
+            parquet_base_name = os.path.splitext(parquet_uploader.name)[0]
+        if uploaded:
+            file_kind, df_input, xls_for_copy, sheet_name, base_name = _load_input(uploaded)
+            # シート名選択（Excelのみ）
+            if file_kind == "excel" and xls_for_copy is not None:
+                sheet_name = st.selectbox("シート名を選択", options=xls_for_copy.sheet_names, index=0)
+                df_input = xls_for_copy.parse(sheet_name, dtype=str)
+        elif df_parquet is not None:
+            df_input = df_parquet
+            file_kind = "parquet"
+            xls_for_copy = None
+            sheet_name = "data"
+            base_name = parquet_base_name or "parquet_input"
 
         zip_cols = st.multiselect("郵便番号列を選択", options=df_input.columns.tolist())
         addr_cols = st.multiselect("住所列を選択", options=df_input.columns.tolist())
@@ -350,6 +364,35 @@ def main():
                 uploaded_cache = json.load(io.BytesIO(cache_uploader.read()))
             except Exception:
                 st.warning("キャッシュJSONの読込に失敗しました")
+
+        # ParquetとExcel/CSVの両方がある場合は住所列キーでParquetを優先マージ
+        if uploaded and df_parquet is not None and addr_cols:
+            missing_base = [c for c in addr_cols if c not in df_input.columns]
+            missing_parquet = [c for c in addr_cols if c not in df_parquet.columns]
+            if missing_base or missing_parquet:
+                st.warning(
+                    f"Parquet優先マージをスキップしました。欠損列: "
+                    f"ベース={missing_base or 'なし'}, Parquet={missing_parquet or 'なし'}"
+                )
+            else:
+                def _build_key(df):
+                    parts = [df[col].fillna("").astype(str).apply(normalize_address) for col in addr_cols]
+                    key = parts[0]
+                    for p in parts[1:]:
+                        key = key + "||" + p
+                    return key
+
+                base_df = df_input.copy()
+                pq_df = df_parquet.copy()
+                base_df["_merge_key"] = _build_key(base_df)
+                pq_df["_merge_key"] = _build_key(pq_df)
+
+                pq_df = pq_df[pq_df["_merge_key"] != ""]
+                base_df = base_df.set_index("_merge_key")
+                pq_df = pq_df.set_index("_merge_key")
+                merged = pq_df.combine_first(base_df)
+                df_input = merged.reset_index(drop=True)
+                st.info("Parquetの行を優先し、残りはExcel/CSVから突合するデータを使用します（キー: 住所列の正規化結合）。")
 
         run_clicked = st.button("実行 / 再実行", type="primary")
         clear_clicked = st.button("結果をクリア", key="clear_outputs")
