@@ -201,8 +201,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         df_pref_sorted["len_city_town"] = df_pref_sorted["市区町村名(漢字)"].fillna("").str.len() + df_pref_sorted["町域名(漢字)"].fillna("").str.len()
         df_pref_sorted = df_pref_sorted.sort_values("len_city_town", ascending=False)
 
-        # 完全一致（町域がマスタ候補より短い場合は曖昧とみなし町域なしで打ち切り）
-        # 入力に含まれる町域の最長一致を採用（入力が短い場合は町域なし）
+        # 入力に含まれる町域の最長一致を採用（入力が短い町域候補が存在する場合は曖昧として町域なし）
+        ambiguous_prefix = False
         best_row = None
         best_len = 0
         for _, row in df_pref_sorted.iterrows():
@@ -211,7 +211,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             full_norm = normalize_address(f"{pref}{city}{town}")
             if full_norm and addr_norm.startswith(full_norm):
                 if len(addr_norm) < len(full_norm):
-                    # 入力が町域より短い場合は曖昧なのでスキップ
+                    ambiguous_prefix = True
                     continue
                 if len(full_norm) > best_len:
                     best_len = len(full_norm)
@@ -228,6 +228,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             idx_used = best_row.name
             match_flag = "pref_city_town"
             return result, idx_used, match_flag
+        if ambiguous_prefix:
+            return result, None, "pref_city"
 
         # 市区町村一致
         for _, row in df_pref_sorted.iterrows():
@@ -270,6 +272,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         for city_norm, df_city in city_groups.items():
             # 部分一致だと「中央区」で別の都府県に誤ヒットするため前方一致のみ
             if city_norm and addr_norm.startswith(city_norm):
+                ambiguous_prefix = False
                 best_row = None
                 best_len = 0
                 for _, row in df_city.iterrows():
@@ -277,6 +280,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                     target = f"{city_norm}{normalize_address(town)}"
                     if target and addr_norm.startswith(target):
                         if len(addr_norm) < len(target):
+                            ambiguous_prefix = True
                             continue
                         if len(target) > best_len:
                             best_len = len(target)
@@ -295,6 +299,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                     idx_used = best_row.name
                     match_flag = "no_pref_city_town"
                     return result, idx_used, match_flag
+                if ambiguous_prefix:
+                    return result, None, "no_pref_city"
                 # 町域は不明だが市区町村が一意
                 row = df_city.iloc[0]
                 result.update({
