@@ -181,6 +181,9 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
     if not addr_norm:
         return None
 
+    # デバッグ用に正規化後の住所をログ出力
+    print(f"[addr_match_debug] addr_norm={addr_norm}")
+
     result: Dict[str, Optional[str]] = {col: None for col in MASTER_COLUMNS_ADDR}
     idx_used: Optional[int] = None
     match_flag: Optional[str] = None
