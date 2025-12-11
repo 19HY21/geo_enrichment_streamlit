@@ -220,7 +220,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             return result, idx_used, match_flag
 
         for city_norm, df_city in city_groups.items():
-            if city_norm and city_norm in addr_norm:
+            # 部分一致だと「中央区」で別の都府県に誤ヒットするため前方一致のみ
+            if city_norm and addr_norm.startswith(city_norm):
                 for _, row in df_city.iterrows():
                     town = safe_strip(row["町域名(漢字)"])
                     target = f"{city_norm}{normalize_address(town)}"
