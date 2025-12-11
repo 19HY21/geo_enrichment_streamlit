@@ -114,6 +114,21 @@ def normalize_address(addr: str) -> str:
     return s.replace("\u3000", "").replace("\n", "").replace("\t", "").replace(" ", "").strip()
 
 
+def _has_town_boundary(addr_norm: str, prefix_len: int) -> bool:
+    """
+    町域が前方一致した後、番地などの区切りで終わっているかを判定する。
+    """
+    if len(addr_norm) == prefix_len:
+        return True
+    next_char = addr_norm[prefix_len]
+    boundary_chars = {"-", "ー", "−", "－", "―", "‐", "の", "丁", "号", "番", "地"}
+    if next_char.isdigit():
+        return True
+    if next_char in boundary_chars:
+        return True
+    return False
+
+
 def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:
     # 都道府県名は通常住所先頭に付くため、前方一致で判定する（部分一致だと「東京都府中市」で京都府を誤検出する）
     for p in prefs:
@@ -188,12 +203,14 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         df_pref_sorted["len_city_town"] = df_pref_sorted["市区町村名(漢字)"].fillna("").str.len() + df_pref_sorted["町域名(漢字)"].fillna("").str.len()
         df_pref_sorted = df_pref_sorted.sort_values("len_city_town", ascending=False)
 
-        # 完全一致
+        # 完全一致（町域がマスタ候補より短い場合は曖昧とみなし町域なしで打ち切り）
         for _, row in df_pref_sorted.iterrows():
             city = safe_strip(row["市区町村名(漢字)"])
             town = safe_strip(row["町域名(漢字)"])
             full_norm = normalize_address(f"{pref}{city}{town}")
             if full_norm and addr_norm.startswith(full_norm):
+                if len(addr_norm) < len(full_norm):
+                    return result, None, "pref_city"  # 町域候補より短く曖昧
                 result.update({
                     "地方コード": row.get("地方コード", result.get("地方コード")),
                     "地方名": row.get("地方名", result.get("地方名")),
@@ -250,7 +267,9 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                 for _, row in df_city.iterrows():
                     town = safe_strip(row["町域名(漢字)"])
                     target = f"{city_norm}{normalize_address(town)}"
-                    if target and target in addr_norm:
+                    if target and addr_norm.startswith(target):
+                        if len(addr_norm) < len(target):
+                            return result, None, "no_pref_city"  # 町域候補より短く曖昧
                         result.update({
                             "地方コード": row.get("地方コード"),
                             "地方名": row.get("地方名"),
