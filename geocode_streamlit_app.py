@@ -9,6 +9,7 @@ import io
 import json
 import os
 import sys
+from datetime import datetime
 from typing import List, Tuple
 
 import pandas as pd
@@ -38,8 +39,9 @@ normalize_address = logic.normalize_address
 
 
 def _log(log_box, msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
     logs = st.session_state.setdefault("logs", [])
-    logs.append(msg)
+    logs.append(f"[{ts}] {msg}")
     log_box.write("\n".join(logs))
 
 
@@ -57,6 +59,8 @@ def _run_pipeline(
     batch_size: int,
     geocode_enabled: bool = True,
     uploaded_cache: dict | None = None,
+    process_mask: pd.Series | None = None,
+    chunk_offset: int = 0,
 ):
     st.session_state["addr_chunk_downloads"] = []
     st.session_state["geo_chunk_downloads"] = []
@@ -94,11 +98,16 @@ def _run_pipeline(
     _log(log_box, "マスタ読込開始")
     master_df = read_master()
     _log(log_box, "マスタ読込完了")
-    _log(log_box, f"入力件数: {len(df_input)} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}")
+    total_rows_all = len(df_input)
+    if process_mask is not None:
+        df_proc_in = df_input.loc[process_mask].copy()
+    else:
+        df_proc_in = df_input.copy()
+    _log(log_box, f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}")
 
     # 必要列のみ抽出
     cols_needed = list(dict.fromkeys(zip_cols + addr_cols))
-    df_work = df_input[cols_needed].copy() if cols_needed else df_input.copy()
+    df_work = df_proc_in[cols_needed].copy() if cols_needed else df_proc_in.copy()
     used_zip_codes = set()
     used_master_idx = set()
 
@@ -134,7 +143,7 @@ def _run_pipeline(
                 chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
             )
             addr_chunks.append(chunk)
-            chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1}_{end}.parquet"
+            chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
             chunk_path = os.path.join(chunk_dir, chunk_fname)
             chunk.to_parquet(chunk_path, index=False)
             try:
@@ -143,10 +152,17 @@ def _run_pipeline(
                 buf.seek(0)
                 st.session_state["addr_chunk_downloads"].append(
                     {
-                        "label": f"住所チャンク {start+1}-{end} をダウンロード (Parquet)",
+                        "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
                         "data": buf.getvalue(),
                         "name": chunk_fname,
                     }
+                )
+                addr_dl_box.download_button(
+                    label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                    data=buf.getvalue(),
+                    file_name=chunk_fname,
+                    mime="application/octet-stream",
+                    key=f"addr_chunk_live_{start}_{end}_{chunk_offset}",
                 )
             except Exception:
                 pass
@@ -209,16 +225,23 @@ def _run_pipeline(
                         for k, v in chunk_results.items()
                     ]
                 )
-                geo_chunk_fname = f"{base_name or 'output'}_geo_chunk_{start+1}_{end}.parquet"
+                geo_chunk_fname = f"{base_name or 'output'}_geo_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
                 geo_bytes = io.BytesIO()
                 geo_df.to_parquet(geo_bytes, index=False)
                 geo_bytes.seek(0)
                 st.session_state["geo_chunk_downloads"].append(
                     {
-                        "label": f"ジオコードチャンク {start+1}-{end} をダウンロード (Parquet)",
+                        "label": f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
                         "data": geo_bytes.getvalue(),
                         "name": geo_chunk_fname,
                     }
+                )
+                geo_dl_box.download_button(
+                    label=f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                    data=geo_bytes.getvalue(),
+                    file_name=geo_chunk_fname,
+                    mime="application/octet-stream",
+                    key=f"geo_chunk_live_{start}_{end}_{chunk_offset}",
                 )
             except Exception:
                 pass
@@ -236,11 +259,16 @@ def _run_pipeline(
     out_base = base_name or "output"
     df_out_merge = df_input.copy()
     for col in df_work.columns:
-        df_out_merge[col] = df_work[col]
+        df_out_merge.loc[df_work.index, col] = df_work[col]
+    for helper_col in ["__merge_key", "__is_parquet"]:
+        if helper_col in df_out_merge.columns:
+            df_out_merge = df_out_merge.drop(columns=[helper_col])
+
+    df_input_clean = df_input.drop(columns=["__merge_key", "__is_parquet"], errors="ignore")
 
     if file_kind == "excel":
         buf = _build_excel_output(
-            xls_for_copy, sheet_name, df_input, df_out_merge, master_df, used_zip_codes, used_master_idx
+            xls_for_copy, sheet_name, df_input_clean, df_out_merge, master_df, used_zip_codes, used_master_idx
         )
         fname = f"{out_base}{OUTPUT_SUFFIX}.xlsx"
     else:
@@ -321,7 +349,12 @@ def main():
     )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
-    parquet_uploader = st.file_uploader("突合済みParquetをアップロード（任意）", type=["parquet"], key="parquet_uploader")
+    parquet_uploader = st.file_uploader(
+        "突合済みParquetをアップロード（任意・複数可）",
+        type=["parquet"],
+        key="parquet_uploader",
+        accept_multiple_files=True,
+    )
     result_placeholder = st.empty()
     download_cache_placeholder = st.empty()
 
@@ -336,10 +369,18 @@ def main():
     if uploaded or parquet_uploader:
         df_parquet = None
         parquet_base_name = None
-        if parquet_uploader:
-            file_bytes = parquet_uploader.read()
-            df_parquet = pd.read_parquet(io.BytesIO(file_bytes))
-            parquet_base_name = os.path.splitext(parquet_uploader.name)[0]
+        parquet_files = parquet_uploader if parquet_uploader else []
+        if parquet_files:
+            pq_frames = []
+            pq_names = []
+            for f in parquet_files:
+                pq_names.append(f.name)
+                pq_frames.append(pd.read_parquet(io.BytesIO(f.read())))
+            df_parquet = pd.concat(pq_frames, ignore_index=True) if pq_frames else None
+            parquet_base_name = os.path.splitext(parquet_files[0].name)[0]
+        parquet_keys_set = set()
+        process_mask = None
+        chunk_offset = 0
         if uploaded:
             file_kind, df_input, xls_for_copy, sheet_name, base_name = _load_input(uploaded)
             # シート名選択（Excelのみ）
@@ -365,8 +406,8 @@ def main():
             except Exception:
                 st.warning("キャッシュJSONの読込に失敗しました")
 
-        # ParquetとExcel/CSVの両方がある場合は住所列キーでParquetを優先マージ
-        if uploaded and df_parquet is not None and addr_cols:
+        # Parquetがある場合は住所列キーでParquetを優先マージ
+        if df_parquet is not None and addr_cols:
             missing_base = [c for c in addr_cols if c not in df_input.columns]
             missing_parquet = [c for c in addr_cols if c not in df_parquet.columns]
             if missing_base or missing_parquet:
@@ -391,18 +432,34 @@ def main():
                 base_df = base_df.set_index("_merge_key")
                 pq_df = pq_df.set_index("_merge_key")
                 merged = pq_df.combine_first(base_df)
-                df_input = merged.reset_index(drop=True)
-                st.info("Parquetの行を優先し、残りはExcel/CSVから突合するデータを使用します（キー: 住所列の正規化結合）。")
+                len_base = len(base_df)
+                len_pq = len(pq_df)
+                len_merged = len(merged)
+                parquet_keys_set = set(pq_df.index)
+                merged = merged.reset_index()
+                # インデックス名が index または _merge_key のどちらでも __merge_key に揃える
+                merged = merged.rename(columns={"index": "__merge_key", "_merge_key": "__merge_key"})
+                if "__merge_key" not in merged.columns:
+                    # 最後の保険: 先頭列を __merge_key とみなす
+                    merged.insert(0, "__merge_key", merged.index)
+                merged["__is_parquet"] = merged["__merge_key"].isin(parquet_keys_set)
+                df_input = merged
+                msg = (
+                    f"Parquetの行を優先してマージしました（キー: 住所列の正規化結合）。"
+                    f" 行数: ベース={len_base}, Parquet合計={len_pq}, マージ後={len_merged}"
+                )
+                if len_merged > len_base:
+                    st.warning(msg + " ※ベースに無いキーがParquet側にあり、行が増えています。")
+                elif len_merged < len_base:
+                    st.warning(msg + " ※マージ後に行数が減少しました（キー重複などを確認してください）。")
+                else:
+                    st.info(msg + " （行数変化なし）")
+                process_mask = None
+                if "__is_parquet" in df_input:
+                    process_mask = ~df_input["__is_parquet"]
+                    chunk_offset = int(df_input["__is_parquet"].sum())
 
         run_clicked = st.button("実行 / 再実行", type="primary")
-        clear_clicked = st.button("結果をクリア", key="clear_outputs")
-
-        if clear_clicked:
-            st.session_state["addr_chunk_downloads"] = []
-            st.session_state["geo_chunk_downloads"] = []
-            st.session_state["result_file"] = None
-            st.session_state["cache_file"] = None
-            st.session_state["logs"] = []
 
         if run_clicked:
             log_box = st.empty()
@@ -420,6 +477,8 @@ def main():
                 batch_size=BATCH_SIZE_DEFAULT,
                 geocode_enabled=geocode_enabled,
                 uploaded_cache=uploaded_cache,
+                process_mask=process_mask,
+                chunk_offset=chunk_offset,
             )
 
             st.session_state["result_file"] = {
@@ -433,45 +492,46 @@ def main():
                         "name": os.path.basename(cache_path),
                     }
 
-    if st.session_state.get("result_file"):
-        result_placeholder.download_button(
-            label="結果データをダウンロード",
-            data=st.session_state["result_file"]["data"],
-            file_name=st.session_state["result_file"]["name"],
-            mime="application/octet-stream",
-            key="result_download",
-        )
-
-    if st.session_state.get("addr_chunk_downloads"):
-        st.subheader("住所突合チャンクのダウンロード")
-        for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
-            st.download_button(
-                label=item["label"],
-                data=item["data"],
-                file_name=item["name"],
+        # 実行ボタンの直下に結果ダウンロードを配置
+        if st.session_state.get("result_file"):
+            result_placeholder.download_button(
+                label="結果データをダウンロード",
+                data=st.session_state["result_file"]["data"],
+                file_name=st.session_state["result_file"]["name"],
                 mime="application/octet-stream",
-                key=f"addr_chunk_{i}",
+                key="result_download",
             )
 
-    if st.session_state.get("geo_chunk_downloads"):
-        st.subheader("ジオコーディングチャンクのダウンロード")
-        for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
-            st.download_button(
-                label=item["label"],
-                data=item["data"],
-                file_name=item["name"],
-                mime="application/octet-stream",
-                key=f"geo_chunk_{i}",
-            )
+        if st.session_state.get("addr_chunk_downloads"):
+            st.subheader("住所突合チャンクのダウンロード")
+            for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
+                st.download_button(
+                    label=item["label"],
+                    data=item["data"],
+                    file_name=item["name"],
+                    mime="application/octet-stream",
+                    key=f"addr_chunk_{i}",
+                )
 
-    if st.session_state.get("cache_file"):
-        download_cache_placeholder.download_button(
-            label="キャッシュJSONをダウンロード（次回再利用用）",
-            data=st.session_state["cache_file"]["data"],
-            file_name=st.session_state["cache_file"]["name"],
-            mime="application/json",
-            key="cache_download",
-        )
+        if st.session_state.get("geo_chunk_downloads"):
+            st.subheader("ジオコーディングチャンクのダウンロード")
+            for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
+                st.download_button(
+                    label=item["label"],
+                    data=item["data"],
+                    file_name=item["name"],
+                    mime="application/octet-stream",
+                    key=f"geo_chunk_{i}",
+                )
+
+        if st.session_state.get("cache_file"):
+            download_cache_placeholder.download_button(
+                label="キャッシュJSONをダウンロード（次回再利用用）",
+                data=st.session_state["cache_file"]["data"],
+                file_name=st.session_state["cache_file"]["name"],
+                mime="application/json",
+                key="cache_download",
+            )
 
 
 if __name__ == "__main__":
