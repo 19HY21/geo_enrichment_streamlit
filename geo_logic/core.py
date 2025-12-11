@@ -86,7 +86,21 @@ def pad_zip(val: Optional[str]) -> str:
 def normalize_address(addr: str) -> str:
     if not addr:
         return ""
-    return str(addr).replace("\u3000", "").replace("\n", "").replace("\t", "").replace(" ", "").strip()
+    s = str(addr)
+    # 数字の表記ゆれ（半角/全角アラビア数字→漢数字化）を補正
+    digit_map = str.maketrans({
+        "１": "一", "1": "一",
+        "2": "二", "２": "二",
+        "3": "三", "３": "三",
+        "4": "四", "４": "四",
+        "5": "五", "５": "五",
+        "6": "六", "６": "六",
+        "7": "七", "７": "七",
+        "8": "八", "８": "八",
+        "9": "九", "９": "九",
+    })
+    s = s.translate(digit_map)
+    return s.replace("\u3000", "").replace("\n", "").replace("\t", "").replace(" ", "").strip()
 
 
 def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:

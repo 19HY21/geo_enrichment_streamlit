@@ -192,6 +192,25 @@ def _run_pipeline(
     if geocode_enabled and addr_cols:
         save_cache(local_cache_path, cache)
 
+    # 郵便番号フラグ列の位置を調整（郵便番号_大口事業所名（漢字）と最初の住所_地方コードの間）
+    def reorder_zip_flag(df: pd.DataFrame) -> pd.DataFrame:
+        if not addr_cols:
+            return df
+        addr_region_col = f"{addr_cols[0]}_地方コード"
+        if addr_region_col not in df.columns:
+            return df
+        cols = list(df.columns)
+        for zcol in zip_cols:
+            flag_col = f"{zcol}_zip_match_flag"
+            target_col = f"{zcol}_大口事業所名（漢字）"
+            if flag_col in cols and target_col in cols and addr_region_col in cols:
+                cols.remove(flag_col)
+                insert_at = cols.index(target_col) + 1
+                cols.insert(insert_at, flag_col)
+        return df[cols]
+
+    df_work = reorder_zip_flag(df_work)
+
     # 出力生成
     out_base = base_name or "output"
     if file_kind == "excel":
