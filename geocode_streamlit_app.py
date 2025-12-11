@@ -103,8 +103,11 @@ def _run_pipeline(
     _log(log_box, "マスタ読込開始")
     master_df = read_master()
     _log(log_box, f"マスタ読込完了")
+    _log(log_box, f"入力件数: {len(df_input)} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}")
 
-    df_work = df_input.copy()
+    # 必要列のみを処理用に抽出しメモリを節約
+    cols_needed = list(dict.fromkeys(zip_cols + addr_cols))
+    df_work = df_input[cols_needed].copy() if cols_needed else df_input.copy()
     used_zip_codes = set()
     used_master_idx = set()
 
@@ -127,13 +130,24 @@ def _run_pipeline(
         _log(log_box, f"住所突合開始: {addr_cols}")
         prog_bar("addr", 0, "[addr] 処理開始")
 
-        def addr_prog(col, done, total, detail):
-            pct = done / max(total, 1) * 100
-            prog_bar("addr", pct, f"[addr] {detail}")
+        # チャンク処理でメモリ負荷を抑える
+        chunk_size = 1000
+        addr_chunks = []
+        total_rows = len(df_work)
+        processed = 0
+        for start in range(0, total_rows, chunk_size):
+            end = min(start + chunk_size, total_rows)
+            chunk = df_work.iloc[start:end].copy()
+            chunk = attach_master_by_address(
+                chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
+            )
+            addr_chunks.append(chunk)
+            processed = end
+            pct = processed / max(total_rows, 1) * 100
+            prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
+            _log(log_box, f"[addr] chunk {start+1}-{end} 完了")
 
-        df_work = attach_master_by_address(
-            df_work, master_df, addr_cols, progress=addr_prog, used_master_idx=used_master_idx
-        )
+        df_work = pd.concat(addr_chunks).sort_index()
         prog_bar("addr", 100, "[addr] 完了")
         _log(log_box, f"住所突合完了 使用行: {len(used_master_idx)}件")
 
@@ -163,11 +177,13 @@ def _run_pipeline(
             chunk = unique_addrs[start:end]
 
             def geo_prog(done, total, kind):
+                # ジオコーディング進捗コールバック
                 now_done = overall_done + done
                 pct = now_done / max(total_unique, 1) * 100
                 prog_bar("geo", pct, f"[geo] {now_done}/{total_unique} ({pct:.1f}%)")
 
             def geo_cache_save(c):
+                # ジオコーディングキャッシュ保存コールバック
                 save_cache(local_cache_path, c)
 
             _log(log_box, f"バッチ処理: {start+1}〜{end}件目")
@@ -183,7 +199,7 @@ def _run_pipeline(
             overall_done = end
             _log(log_box, f"バッチ完了 cache_hit={cache_hit} 新規={new_count} 累計={overall_done}/{total_unique}")
 
-        df_work = add_geocode_columns(df_work, addr_cols, geo_results)
+    df_work = add_geocode_columns(df_work, addr_cols, geo_results)
     else:
         _log(log_box, "ジオコーディングはスキップ（住所未選択または緯度経度付与オフ）")
 
@@ -195,12 +211,19 @@ def _run_pipeline(
     # 出力生成
     out_base = base_name or "output"
     if file_kind == "excel":
+        # 元の入力に突合結果を統合して出力
+        df_out_merge = df_input.copy()
+        for col in df_work.columns:
+            if col in df_out_merge.columns:
+                df_out_merge[col] = df_work[col]
+            else:
+                df_out_merge[col] = df_work[col]
         buf = _build_excel_output(
-            xls_for_copy, sheet_name, df_input, df_work, master_df, used_zip_codes, used_master_idx
+            xls_for_copy, sheet_name, df_input, df_out_merge, master_df, used_zip_codes, used_master_idx
         )
         fname = f"{out_base}{OUTPUT_SUFFIX}.xlsx"
     else:
-        buf = _build_csv_output(df_work)
+        buf = _build_csv_output(df_out_merge)
         fname = f"{out_base}{OUTPUT_SUFFIX}.csv"
 
     prog_bar("out", 50, "[out] 生成中")
@@ -248,6 +271,7 @@ def _build_excel_output(
 
 
 def _build_csv_output(processed_df: pd.DataFrame):
+    # CSV出力をBytesIOに作成。
     buf = io.BytesIO()
     processed_df.to_csv(buf, index=False, encoding="utf-8-sig")
     buf.seek(0)
@@ -268,10 +292,11 @@ def _load_input(uploaded_file) -> Tuple[str, pd.DataFrame, pd.ExcelFile, str, st
 
 
 def main():
+    # Streamlitアプリ本体
     st.set_page_config(page_title="Geo Enrichment Tool", layout="wide")
     st.title("Geo Enrichment Tool")
     st.caption(
-        "住所・郵便番号から、日本郵政マスタを用いて都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与し、結果データを生成するアプリです。"
+        "住所・郵便番号から、日本郵政マスタを用いて都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与し、データを生成するアプリです。"
     )
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
