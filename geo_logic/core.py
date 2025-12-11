@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Core geocoding logic
 - マスタ読み込み
@@ -92,6 +92,9 @@ def _to_kanji_number(num_str: str) -> str:
         n = int(num_str)
     except Exception:
         return num_str
+    # 3桁以上（100以上）は番地・号など長い数字とみなし変換しない
+    if n >= 100:
+        return num_str
     if n == 0:
         return KANJI_DIGITS[0]
     units = [(1000, "千"), (100, "百"), (10, "十"), (1, "")]
@@ -100,6 +103,9 @@ def _to_kanji_number(num_str: str) -> str:
         q, n = divmod(n, val)
         if q == 0:
             continue
+        # 安全のため、想定外の桁はそのまま返す
+        if q >= len(KANJI_DIGITS):
+            return num_str
         if val == 1:
             out.append(KANJI_DIGITS[q])
         else:
@@ -110,6 +116,7 @@ def _to_kanji_number(num_str: str) -> str:
 
 
 def normalize_address(addr: str) -> str:
+    # 住所正規化（小書きカナを通常カナに、数字を漢数字に、空白類除去）
     if not addr:
         return ""
     s = str(addr)
@@ -172,10 +179,12 @@ def _infer_prefecture_from_city(addr_norm: str, city_groups: Dict[str, pd.DataFr
 
 
 def read_master() -> pd.DataFrame:
+    # マスタ読み込みと地方コード付与
     df = pd.read_excel(MASTER_PATH, dtype=str)
     df.columns = [c.strip() for c in df.columns]
 
     def to_region(code: str):
+        # 都道府県コードから地方コード・地方名を取得
         if not code or not isinstance(code, str):
             return None, None
         pref2 = code[:2]
@@ -196,6 +205,7 @@ def read_master() -> pd.DataFrame:
 
 
 def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], city_groups: Optional[Dict[str, pd.DataFrame]] = None) -> Optional[Tuple[Dict[str, Optional[str]], Optional[int], Optional[str]]]:
+    # 住所からマスタ突合
     addr_norm = normalize_address(addr)
     if not addr_norm:
         return None
@@ -343,6 +353,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
 
 
 def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[str], progress=None, used_zip_codes=None) -> pd.DataFrame:
+    # 郵便番号突合
     result = df.copy()
     total = max(len(zip_cols), 1)
     done = 0
@@ -466,6 +477,7 @@ def attach_master_by_address(df: pd.DataFrame, master: pd.DataFrame, addr_cols: 
 
 
 def nominatim_search(query: str, user_agent: str) -> Optional[Tuple[float, float]]:
+    # Nominatimジオコーディング検索
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": query, "format": "json", "limit": 1}
     headers = {"User-Agent": user_agent}
@@ -481,6 +493,7 @@ def nominatim_search(query: str, user_agent: str) -> Optional[Tuple[float, float
 
 
 def generate_queries(addr: str) -> List[Tuple[str, str]]:
+    # ジオコーディング用クエリ生成
     addr = normalize_address(addr)
     queries = []
     if addr:
@@ -503,6 +516,7 @@ def generate_queries(addr: str) -> List[Tuple[str, str]]:
 
 
 def load_cache(cache_path: str) -> Dict[str, Tuple[Optional[float], Optional[float], str]]:
+    # ジオコーディングキャッシュ読み込み
     if not cache_path or not os.path.exists(cache_path):
         return {}
     try:
@@ -514,6 +528,7 @@ def load_cache(cache_path: str) -> Dict[str, Tuple[Optional[float], Optional[flo
 
 
 def save_cache(cache_path: str, cache: Dict[str, Tuple[Optional[float], Optional[float], str]]):
+    # ジオコーディングキャッシュ保存
     if not cache_path:
         return
     try:
@@ -526,6 +541,7 @@ def save_cache(cache_path: str, cache: Dict[str, Tuple[Optional[float], Optional
 
 
 def geocode_addresses(addresses: List[str], user_agent: str, cache: Dict[str, Tuple[Optional[float], Optional[float], str]], progress_cb=None, cache_save_cb=None) -> Tuple[Dict[str, Tuple[Optional[float], Optional[float], str]], int, int]:
+    # 住所リストをジオコーディング
     results: Dict[str, Tuple[Optional[float], Optional[float], str]] = {}
     unique_addrs = [a for a in pd.Series(addresses).dropna().unique().tolist() if normalize_address(a)]
     total = len(unique_addrs)
