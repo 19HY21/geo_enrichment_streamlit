@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -87,19 +88,29 @@ def normalize_address(addr: str) -> str:
     if not addr:
         return ""
     s = str(addr)
-    # 数字の表記ゆれ（半角/全角アラビア数字→漢数字化）を補正
-    digit_map = str.maketrans({
-        "１": "一", "1": "一",
-        "2": "二", "２": "二",
-        "3": "三", "３": "三",
-        "4": "四", "４": "四",
-        "5": "五", "５": "五",
-        "6": "六", "６": "六",
-        "7": "七", "７": "七",
-        "8": "八", "８": "八",
-        "9": "九", "９": "九",
-    })
-    s = s.translate(digit_map)
+    # 数字の表記ゆれを補正（連続数字を漢数字に変換: 19 -> 十九）
+    def _to_kanji_number(num_str: str) -> str:
+        try:
+            n = int(num_str)
+        except Exception:
+            return num_str
+        if n == 0:
+            return "零"
+        units = [(1000, "千"), (100, "百"), (10, "十"), (1, "")]
+        out = []
+        for val, sym in units:
+            q, n = divmod(n, val)
+            if q == 0:
+                continue
+            if val == 1:
+                out.append("零" if q == 0 else "一" if q == 1 else "二" if q == 2 else "三" if q == 3 else "四" if q == 4 else "五" if q == 5 else "六" if q == 6 else "七" if q == 7 else "八" if q == 8 else "九")
+            else:
+                if q > 1:
+                    out.append("一" if q == 1 else "二" if q == 2 else "三" if q == 3 else "四" if q == 4 else "五" if q == 5 else "六" if q == 6 else "七" if q == 7 else "八" if q == 8 else "九")
+                out.append(sym)
+        return "".join(out)
+
+    s = re.sub(r"[0-9０-９]+", lambda m: _to_kanji_number(m.group(0)), s)
     return s.replace("\u3000", "").replace("\n", "").replace("\t", "").replace(" ", "").strip()
 
 
