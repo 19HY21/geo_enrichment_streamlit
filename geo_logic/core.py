@@ -90,10 +90,27 @@ def normalize_address(addr: str) -> str:
 
 
 def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:
+    # 都道府県名は通常住所先頭に付くため、前方一致で判定する（部分一致だと「東京都府中市」で京都府を誤検出する）
     for p in prefs:
         p_norm = normalize_address(p)
-        if p_norm and p_norm in addr:
+        if p_norm and addr.startswith(p_norm):
             return p
+    return None
+
+
+def _infer_prefecture_from_city(addr_norm: str, city_groups: Dict[str, pd.DataFrame]) -> Optional[Tuple[pd.Series, str]]:
+    """
+    都道府県名がなく、市区町村で一意に決まる場合に都道府県を補完する。
+    戻り値: (row, flag) or None
+    """
+    for city_norm, df_city in city_groups.items():
+        if not city_norm:
+            continue
+        if addr_norm.startswith(city_norm):
+            # city_norm が住所先頭にあり、都道府県が一意なら補完
+            unique_prefs = df_city["都道府県名(漢字)"].dropna().unique().tolist()
+            if len(unique_prefs) == 1:
+                return df_city.iloc[0], "city_only"
     return None
 
 
@@ -184,6 +201,24 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
 
     # 都道府県なし: 市区町村グループで判定
     if city_groups is not None:
+        # まず市区町村から都道府県が一意に決まるケース
+        inferred = _infer_prefecture_from_city(addr_norm, city_groups)
+        if inferred:
+            row, flag = inferred
+            result.update({
+                "地方コード": row.get("地方コード"),
+                "地方名": row.get("地方名"),
+                "都道府県コード": row["都道府県コード"],
+                "都道府県名(漢字)": row["都道府県名(漢字)"],
+                "団体コード": row["団体コード"],
+                "市区町村名(漢字)": row["市区町村名(漢字)"],
+                "政令指定都市フラグ": row["政令指定都市フラグ"],
+                "町域名(漢字)": None,
+            })
+            idx_used = row.name
+            match_flag = flag
+            return result, idx_used, match_flag
+
         for city_norm, df_city in city_groups.items():
             if city_norm and city_norm in addr_norm:
                 for _, row in df_city.iterrows():

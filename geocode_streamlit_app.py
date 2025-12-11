@@ -59,6 +59,7 @@ def _run_pipeline(
     log_box,
     base_name: str,
     batch_size: int,
+    geocode_enabled: bool = True,
     uploaded_cache: dict | None = None,
 ):
     """突合〜ジオコーディング〜出力データ生成を実行。"""
@@ -114,7 +115,7 @@ def _run_pipeline(
         cache.update(uploaded_cache)
     _log(log_box, f"キャッシュ読込: ローカル{len(cache)}件")
 
-    if addr_cols:
+    if addr_cols and geocode_enabled:
         _log(log_box, "ジオコーディング開始（ユニーク住所ベース）")
         all_addrs = []
         for col in addr_cols:
@@ -153,7 +154,7 @@ def _run_pipeline(
 
         df_work = add_geocode_columns(df_work, addr_cols, geo_results)
     else:
-        _log(log_box, "住所列が未選択のためジオコーディングはスキップ")
+        _log(log_box, "ジオコーディングはスキップ（住所未選択または緯度経度付与オフ）")
 
     # 出力生成
     out_base = base_name or "output"
@@ -249,6 +250,7 @@ def main():
     cols = df_input.columns.tolist()
     zip_cols = st.multiselect("郵便番号列を選択（複数可）", cols)
     addr_cols = st.multiselect("住所列を選択（複数可）", cols)
+    geocode_enabled = st.checkbox("緯度経度を付与する", value=True)
     cache_upload = st.file_uploader("キャッシュJSONをアップロード（任意）", type=["json"])
 
     st.markdown("#### ログ")
@@ -273,6 +275,7 @@ def main():
                 log_box,
                 base_name,
                 batch_size=BATCH_SIZE_DEFAULT,
+                geocode_enabled=geocode_enabled,
                 uploaded_cache=uploaded_cache,
             )
             st.session_state["last_output"] = {
