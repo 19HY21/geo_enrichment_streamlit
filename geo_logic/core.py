@@ -88,6 +88,18 @@ def normalize_address(addr: str) -> str:
     if not addr:
         return ""
     s = str(addr)
+    # 小書きカナを正書きに揃える（ヶ/ヵ/ｹ → ケ など）
+    small_kana_map = str.maketrans({
+        "ゃ": "や", "ゅ": "ゆ", "ょ": "よ",
+        "ャ": "ヤ", "ュ": "ユ", "ョ": "ヨ",
+        "ァ": "ア", "ィ": "イ", "ゥ": "ウ", "ェ": "エ", "ォ": "オ",
+        "ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お",
+        "っ": "つ", "ッ": "ツ",
+        "ゎ": "わ", "ヮ": "ワ",
+        "ヶ": "ケ", "ヵ": "カ", "ｹ": "ケ", "ｶ": "カ",
+    })
+    s = s.translate(small_kana_map)
+
     # 数字の表記ゆれを補正（連続数字を漢数字に変換: 19 -> 十九）
     def _to_kanji_number(num_str: str) -> str:
         try:
@@ -204,13 +216,15 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         df_pref_sorted = df_pref_sorted.sort_values("len_city_town", ascending=False)
 
         # 完全一致（町域がマスタ候補より短い場合は曖昧とみなし町域なしで打ち切り）
+        ambiguous_prefix = False
         for _, row in df_pref_sorted.iterrows():
             city = safe_strip(row["市区町村名(漢字)"])
             town = safe_strip(row["町域名(漢字)"])
             full_norm = normalize_address(f"{pref}{city}{town}")
             if full_norm and addr_norm.startswith(full_norm):
                 if len(addr_norm) < len(full_norm):
-                    return result, None, "pref_city"  # 町域候補より短く曖昧
+                    ambiguous_prefix = True
+                    continue
                 result.update({
                     "地方コード": row.get("地方コード", result.get("地方コード")),
                     "地方名": row.get("地方名", result.get("地方名")),
@@ -222,6 +236,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                 idx_used = row.name
                 match_flag = "pref_city_town"
                 return result, idx_used, match_flag
+        if ambiguous_prefix:
+            return result, None, "pref_city"
 
         # 市区町村一致
         for _, row in df_pref_sorted.iterrows():
@@ -264,12 +280,14 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         for city_norm, df_city in city_groups.items():
             # 部分一致だと「中央区」で別の都府県に誤ヒットするため前方一致のみ
             if city_norm and addr_norm.startswith(city_norm):
+                ambiguous_prefix = False
                 for _, row in df_city.iterrows():
                     town = safe_strip(row["町域名(漢字)"])
                     target = f"{city_norm}{normalize_address(town)}"
                     if target and addr_norm.startswith(target):
                         if len(addr_norm) < len(target):
-                            return result, None, "no_pref_city"  # 町域候補より短く曖昧
+                            ambiguous_prefix = True
+                            continue
                         result.update({
                             "地方コード": row.get("地方コード"),
                             "地方名": row.get("地方名"),
@@ -283,6 +301,8 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                         idx_used = row.name
                         match_flag = "no_pref_city_town"
                         return result, idx_used, match_flag
+                if ambiguous_prefix:
+                    return result, None, "no_pref_city"
                 # 町域は不明だが市区町村が一意
                 row = df_city.iloc[0]
                 result.update({
@@ -365,6 +385,7 @@ def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[
 
 
 def attach_master_by_address(df: pd.DataFrame, master: pd.DataFrame, addr_cols: List[str], progress=None, used_master_idx=None) -> pd.DataFrame:
+    # 住所突合
     if not addr_cols:
         return df.copy()
     result = df.copy()
