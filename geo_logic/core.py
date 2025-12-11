@@ -248,8 +248,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             match_flag = "pref_city_town"
             return result, idx_used, match_flag
         else:
-                    # デバッグ: 町域が見つからなかった
-                    _debug(f"[addr_match_debug] town_not_found_pref addr_norm={addr_norm}")
+            _debug(f"[addr_match_debug] town_not_found_pref addr_norm={addr_norm}")
         if ambiguous_prefix:
             return result, None, "pref_city"
 
@@ -273,7 +272,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
 
     # 都道府県なし: 市区町村グループで判定
     if city_groups is not None:
-        # まず市区町村から都道府県が一意に決まるケース
+        # まず市区町村から都道府県が一意に決まるケース（この後も町域探索を続ける）
         inferred = _infer_prefecture_from_city(addr_norm, city_groups)
         if inferred:
             row, flag = inferred
@@ -289,7 +288,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             })
             idx_used = row.name
             match_flag = flag
-            return result, idx_used, match_flag
 
         for city_norm, df_city in city_groups.items():
             # 部分一致だと「中央区」で別の都府県に誤ヒットするため前方一致のみ
@@ -343,6 +341,9 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                 idx_used = row.name
                 match_flag = "no_pref_city"
                 return result, idx_used, match_flag
+        # 市区町村推定だけで町域が決まらなかった場合
+        if inferred:
+            return result, idx_used, match_flag
     return None
 
 
