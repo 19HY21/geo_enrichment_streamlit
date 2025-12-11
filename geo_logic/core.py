@@ -231,6 +231,9 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             idx_used = best_row.name
             match_flag = "pref_city_town"
             return result, idx_used, match_flag
+        else:
+            # デバッグ: 町域が見つからなかった
+            print(f"[addr_match_debug] town_not_found_pref addr_norm={addr_norm}")
         if ambiguous_prefix:
             return result, None, "pref_city"
 
@@ -302,6 +305,9 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                     idx_used = best_row.name
                     match_flag = "no_pref_city_town"
                     return result, idx_used, match_flag
+                else:
+                    # デバッグ: 町域が見つからなかった（都道府県なし系）
+                    print(f"[addr_match_debug] town_not_found_no_pref addr_norm={addr_norm}")
                 if ambiguous_prefix:
                     return result, None, "no_pref_city"
                 # 町域は不明だが市区町村が一意
