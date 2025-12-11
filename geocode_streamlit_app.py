@@ -433,7 +433,14 @@ def main():
                 )
             else:
                 def _build_key(df):
-                    parts = [df[col].fillna("").astype(str).apply(normalize_address) for col in addr_cols]
+                    def _to_key(val):
+                        if pd.isna(val):
+                            return ""
+                        if isinstance(val, float) and val.is_integer():
+                            val = int(val)
+                        return normalize_address(str(val))
+
+                    parts = [df[col].apply(_to_key) for col in addr_cols]
                     key = parts[0]
                     for p in parts[1:]:
                         key = key + "||" + p
@@ -444,36 +451,34 @@ def main():
                 base_df["_merge_key"] = _build_key(base_df)
                 pq_df["_merge_key"] = _build_key(pq_df)
 
+                # 空キー除外＆Parquet側は重複キーは先頭だけを残す
                 pq_df = pq_df[pq_df["_merge_key"] != ""]
+                pq_df = pq_df.drop_duplicates("_merge_key", keep="first")
+
                 base_df = base_df.set_index("_merge_key")
                 pq_df = pq_df.set_index("_merge_key")
-                # ベースに存在するキーのみParquetで上書き（ベースにないキーは無視）
-                pq_df_filtered = pq_df.loc[pq_df.index.intersection(base_df.index)]
-                merged = pq_df_filtered.combine_first(base_df)
-                len_base = len(base_df)
-                len_pq = len(pq_df_filtered)
-                len_merged = len(merged)
-                parquet_keys_set = set(pq_df_filtered.index)
-                merged = merged.reset_index()
-                # インデックス名が index または _merge_key のどちらでも __merge_key に揃える
-                merged = merged.rename(columns={"index": "__merge_key", "_merge_key": "__merge_key"})
-                if "__merge_key" not in merged.columns:
-                    # 最後の保険: 先頭列を __merge_key とみなす
-                    merged.insert(0, "__merge_key", merged.index)
-                merged["__is_parquet"] = merged["__merge_key"].isin(parquet_keys_set)
-                df_input = merged
-                msg = (
-                    f"Parquetの行を優先してマージしました（キー: 住所列の正規化結合）。"
-                    f" 行数: ベース={len_base}, Parquet合計={len_pq}, マージ後={len_merged}"
+
+                base_keys = set(base_df.index[base_df.index != ""])
+                pq_keys = set(pq_df.index[pq_df.index != ""])
+                common_keys = base_keys & pq_keys
+                base_only = base_keys - pq_keys
+                pq_only = pq_keys - base_keys
+
+                # Parquetのキーが一致するベース行を上書き（行は増やさない）
+                aligned = pq_df.reindex(base_df.index)
+                base_df.update(aligned)
+
+                base_df["__is_parquet"] = base_df.index.isin(common_keys)
+                df_input = base_df.reset_index().rename(columns={"index": "__merge_key"})
+
+                st.info(
+                    f"キー件数 ベース={len(base_keys)} / Parquet={len(pq_keys)} / 共通={len(common_keys)} / "
+                    f"ベースのみ={len(base_only)} / Parquetのみ={len(pq_only)}"
                 )
-                if len_merged > len_base:
-                    st.warning(msg + " ※ベースに無いキーがParquet側にあり、行が増えています。")
-                elif len_merged < len_base:
-                    st.warning(msg + " ※マージ後に行数が減少しました（キー重複などを確認してください）。")
-                else:
-                    st.info(msg + " （行数変化なし）")
-                process_mask = None
-                chunk_offset = 0
+
+                # Parquetで上書きした行は処理スキップ、未マッチのみ突合
+                process_mask = ~df_input["__is_parquet"]
+                chunk_offset = int(df_input["__is_parquet"].sum())
 
         run_clicked = st.button("実行 / 再実行", type="primary")
 
