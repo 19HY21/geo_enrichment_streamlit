@@ -67,9 +67,39 @@ def _run_pipeline(
     progress = st.progress(0)
     status = st.empty()
 
-    def prog_bar(pct, text):
-        progress.progress(min(max(int(pct), 0), 100))
+    # フェーズ別の重みを設定（有効なフェーズのみで正規化）
+    weights = {
+        "zip": 20,
+        "addr": 20,
+        "geo": 55,
+        "out": 5,
+    }
+    enabled_phases = []
+    enabled_phases.append("zip")
+    if addr_cols:
+        enabled_phases.append("addr")
+    if addr_cols and geocode_enabled:
+        enabled_phases.append("geo")
+    enabled_phases.append("out")
+    total_weight = sum(weights[p] for p in enabled_phases)
+
+    def set_progress(phase: str, pct: float, text: str):
+        # pct: 0-100
+        offset = 0
+        for p in ["zip", "addr", "geo", "out"]:
+            if p == phase:
+                break
+            if p in enabled_phases:
+                offset += weights[p]
+        if phase not in enabled_phases:
+            return
+        w = weights[phase]
+        overall = (offset + w * (pct / 100.0)) / total_weight * 100.0
+        progress.progress(min(max(int(overall), 0), 100))
         status.write(text)
+
+    def prog_bar(phase, pct, text):
+        set_progress(phase, pct, text)
 
     _log(log_box, "マスタ読込開始")
     master_df = read_master()
@@ -85,26 +115,27 @@ def _run_pipeline(
 
         def zip_prog(done, total, detail):
             pct = done / max(total, 1) * 100
-            prog_bar(pct, f"[zip] {detail}")
+            prog_bar("zip", pct, f"[郵便番号] {detail}")
 
         df_work = attach_master_by_zip(
             df_work, master_df, zip_cols, progress=zip_prog, used_zip_codes=used_zip_codes
         )
-        prog_bar(100, "[zip] 完了")
+        prog_bar("zip", 100, "[郵便番号] 完了")
         _log(log_box, f"郵便番号突合完了 使用郵便番号: {len(used_zip_codes)}件")
 
     # 住所突合
     if addr_cols:
         _log(log_box, f"住所突合開始: {addr_cols}")
+        prog_bar("addr", 0, "[addr] 処理開始")
 
         def addr_prog(col, done, total, detail):
             pct = done / max(total, 1) * 100
-            prog_bar(pct, f"[addr] {detail}")
+            prog_bar("addr", pct, f"[addr] {detail}")
 
         df_work = attach_master_by_address(
             df_work, master_df, addr_cols, progress=addr_prog, used_master_idx=used_master_idx
         )
-        prog_bar(100, "[addr] 完了")
+        prog_bar("addr", 100, "[addr] 完了")
         _log(log_box, f"住所突合完了 使用行: {len(used_master_idx)}件")
 
     # ジオコーディング（キャッシュはローカル使用）
@@ -117,6 +148,7 @@ def _run_pipeline(
 
     if addr_cols and geocode_enabled:
         _log(log_box, "ジオコーディング開始（ユニーク住所ベース）")
+        prog_bar("geo", 0, "[geo] 処理開始")
         all_addrs = []
         for col in addr_cols:
             all_addrs.extend(df_work[col].dropna().tolist())
@@ -134,7 +166,7 @@ def _run_pipeline(
             def geo_prog(done, total, kind):
                 now_done = overall_done + done
                 pct = now_done / max(total_unique, 1) * 100
-                prog_bar(pct, f"[geo] {now_done}/{total_unique} ({pct:.1f}%)")
+                prog_bar("geo", pct, f"[geo] {now_done}/{total_unique} ({pct:.1f}%)")
 
             def geo_cache_save(c):
                 save_cache(local_cache_path, c)
@@ -156,6 +188,10 @@ def _run_pipeline(
     else:
         _log(log_box, "ジオコーディングはスキップ（住所未選択または緯度経度付与オフ）")
 
+    # ジオコーディングを実行した場合のみキャッシュを保存（ダウンロード可）
+    if geocode_enabled and addr_cols:
+        save_cache(local_cache_path, cache)
+
     # 出力生成
     out_base = base_name or "output"
     if file_kind == "excel":
@@ -167,8 +203,9 @@ def _run_pipeline(
         buf = _build_csv_output(df_work)
         fname = f"{out_base}{OUTPUT_SUFFIX}.csv"
 
+    prog_bar("out", 50, "[out] 生成中")
     _log(log_box, f"出力生成完了: {fname}")
-    prog_bar(100, "完了")
+    prog_bar("out", 100, "完了")
     return buf, fname, df_work, local_cache_path
 
 

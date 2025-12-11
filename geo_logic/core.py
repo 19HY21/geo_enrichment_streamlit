@@ -354,21 +354,25 @@ def attach_master_by_address(df: pd.DataFrame, master: pd.DataFrame, addr_cols: 
             records.append(cache.get(addr_norm))
         for mcol in MASTER_COLUMNS_ADDR:
             new_col = f"{col}_{mcol}"
-            vals = []
-            for rec in records:
-                if rec is None or rec[0] is None:
-                    vals.append(None)
-                else:
-                    vals.append(rec[0].get(mcol, None))
-            result[new_col] = vals
-        flag_col = f"{col}_match_flag"
-        flags = []
-        for rec in records:
-            if rec is None:
-                flags.append(None)
+            vals = pd.Series(
+                [
+                    None
+                    if (rec is None or rec[0] is None)
+                    else rec[0].get(mcol, None)
+                    for rec in records
+                ],
+                index=result.index,
+            )
+            if new_col in result.columns:
+                result[new_col] = result[new_col].fillna(vals)
             else:
-                flags.append(rec[2])
-        result[flag_col] = flags
+                result[new_col] = vals
+        flag_col = f"{col}_match_flag"
+        flags = pd.Series([None if rec is None else rec[2] for rec in records], index=result.index)
+        if flag_col in result.columns:
+            result[flag_col] = result[flag_col].fillna(flags)
+        else:
+            result[flag_col] = flags
         done_cols += 1
         if progress:
             progress(col, done_cols, total_cols, f"{col} 突合完了")
