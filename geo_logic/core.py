@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Core geocoding logic (UI非依存)
+Core geocoding logic
 - マスタ読み込み
 - 郵便番号/住所突合
 - ジオコーディングとキャッシュ
@@ -17,21 +17,20 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 
-
 # 定数定義
 BASE_DIR = os.path.dirname(__file__)
 MASTER_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "zipcode_localgoverment_mst.xlsx"))
 OUTPUT_SUFFIX = "_GSI"
-CHUNK_SIZE = 100_000  # Nominatim負荷を考慮
-CHUNK_SLEEP_SEC = 7.0  # Nominatim負荷を考慮
-REQUEST_SLEEP_SEC = 0.2  # Nominatim負荷を考慮しつつ高速化
-PROGRESS_UPDATE_SEC = 60  # 進捗ログ更新間隔（秒）
+CHUNK_SIZE = 100_000  # Nominatim負荷を抑える
+CHUNK_SLEEP_SEC = 7.0
+REQUEST_SLEEP_SEC = 0.2
+PROGRESS_UPDATE_SEC = 60
 CHECKPOINT_SAVE_EVERY = 10_000  # ジオコーディング時のキャッシュ保存間隔（ユニーク住所数ベース）
 CACHE_DIR = os.path.join(BASE_DIR, "cache")
 GLOBAL_CACHE_PATH = os.path.join(CACHE_DIR, "geocode_cache_global.json")
 BATCH_SIZE_DEFAULT = 5000
 
-# 地方コード・地方名マッピング（都道府県コード先頭2桁で判定）
+# 地方コード・地方名マッピング（都道府県コード頭2桁で判定）
 REGION_MAP = {
     "01": ("1", "北海道"),
     "02": ("2", "東北"), "03": ("2", "東北"), "04": ("2", "東北"), "05": ("2", "東北"), "06": ("2", "東北"), "07": ("2", "東北"),
@@ -85,53 +84,52 @@ def pad_zip(val: Optional[str]) -> str:
     return v
 
 
+KANJI_DIGITS = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+
+
+def _to_kanji_number(num_str: str) -> str:
+    try:
+        n = int(num_str)
+    except Exception:
+        return num_str
+    if n == 0:
+        return KANJI_DIGITS[0]
+    units = [(1000, "千"), (100, "百"), (10, "十"), (1, "")]
+    out = []
+    for val, sym in units:
+        q, n = divmod(n, val)
+        if q == 0:
+            continue
+        if val == 1:
+            out.append(KANJI_DIGITS[q])
+        else:
+            if q > 1:
+                out.append(KANJI_DIGITS[q])
+            out.append(sym)
+    return "".join(out)
+
+
 def normalize_address(addr: str) -> str:
     if not addr:
         return ""
     s = str(addr)
-    # 小書きカナを正書きに揃える（ヶ/ヵ/ｹ → ケ など）
     small_kana_map = str.maketrans({
         "ゃ": "や", "ゅ": "ゆ", "ょ": "よ",
         "ャ": "ヤ", "ュ": "ユ", "ョ": "ヨ",
-        "ァ": "ア", "ィ": "イ", "ゥ": "ウ", "ェ": "エ", "ォ": "オ",
         "ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お",
+        "ァ": "ア", "ィ": "イ", "ゥ": "ウ", "ェ": "エ", "ォ": "オ",
         "っ": "つ", "ッ": "ツ",
         "ゎ": "わ", "ヮ": "ワ",
-        "ヶ": "ケ", "ヵ": "カ", "ｹ": "ケ", "ｶ": "カ",
+        "ヶ": "ケ", "ヵ": "カ", "㌔": "ケ", "㌕": "カ",
     })
     s = s.translate(small_kana_map)
-
-    # 数字の表記ゆれを補正（連続数字を漢数字に変換: 19 -> 十九）
-    def _to_kanji_number(num_str: str) -> str:
-        try:
-            n = int(num_str)
-        except Exception:
-            return num_str
-        if n == 0:
-            return "零"
-        units = [(1000, "千"), (100, "百"), (10, "十"), (1, "")]
-        out = []
-        for val, sym in units:
-            q, n = divmod(n, val)
-            if q == 0:
-                continue
-            if val == 1:
-                out.append("零" if q == 0 else "一" if q == 1 else "二" if q == 2 else "三" if q == 3 else "四" if q == 4 else "五" if q == 5 else "六" if q == 6 else "七" if q == 7 else "八" if q == 8 else "九")
-            else:
-                if q > 1:
-                    out.append("一" if q == 1 else "二" if q == 2 else "三" if q == 3 else "四" if q == 4 else "五" if q == 5 else "六" if q == 6 else "七" if q == 7 else "八" if q == 8 else "九")
-                out.append(sym)
-        return "".join(out)
-
     s = re.sub(r"[0-9０-９]+", lambda m: _to_kanji_number(m.group(0)), s)
     return s.replace("\u3000", "").replace("\n", "").replace("\t", "").replace(" ", "").strip()
 
 
 def _has_paren_ambiguity(addr_norm: str, pref: Optional[str], df_rows: pd.DataFrame, city_norm_override: Optional[str] = None) -> bool:
     """
-    括弧付きの町域候補が存在し、入力が括弧の前までしか含まない場合は曖昧とみなす。
-    pref: 都道府県名（None の場合は市区町村のみで判定）
-    city_norm_override: 市区町村の正規化済み文字列を直接渡す場合に使用
+    括弧付きの町域候補があり、入力が括弧前までしかない場合は曖昧とみなす。
     """
     for _, row in df_rows.iterrows():
         town = safe_strip(row["町域名(漢字)"])
@@ -149,9 +147,8 @@ def _has_paren_ambiguity(addr_norm: str, pref: Optional[str], df_rows: pd.DataFr
     return False
 
 
-
 def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:
-    # 都道府県名は通常住所先頭に付くため、前方一致で判定する（部分一致だと「東京都府中市」で京都府を誤検出する）
+    # 都道府県名は通常住所先頭に付くため、前方一致で判定
     for p in prefs:
         p_norm = normalize_address(p)
         if p_norm and addr.startswith(p_norm):
@@ -168,7 +165,6 @@ def _infer_prefecture_from_city(addr_norm: str, city_groups: Dict[str, pd.DataFr
         if not city_norm:
             continue
         if addr_norm.startswith(city_norm):
-            # city_norm が住所先頭にあり、都道府県が一意なら補完
             unique_prefs = df_city["都道府県名(漢字)"].dropna().unique().tolist()
             if len(unique_prefs) == 1:
                 return df_city.iloc[0], "city_only"
@@ -204,9 +200,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
     if not addr_norm:
         return None
 
-    # デバッグ用に正規化後の住所をログ出力
-    _debug(f"[addr_match_debug] addr_norm={addr_norm}")
-
     result: Dict[str, Optional[str]] = {col: None for col in MASTER_COLUMNS_ADDR}
     idx_used: Optional[int] = None
     match_flag: Optional[str] = None
@@ -227,7 +220,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         df_pref_sorted["len_city_town"] = df_pref_sorted["市区町村名(漢字)"].fillna("").str.len() + df_pref_sorted["町域名(漢字)"].fillna("").str.len()
         df_pref_sorted = df_pref_sorted.sort_values("len_city_town", ascending=False)
 
-        # 入力に含まれる町域の最長一致を採用（入力が短い町域候補が存在する場合は曖昧として町域なし）
+        # 最長一致で採用。入力が短い町域候補がある場合は曖昧として町域なし。
         ambiguous_prefix = False
         paren_ambiguous = _has_paren_ambiguity(addr_norm, pref, df_pref_sorted)
         best_row = None
@@ -236,9 +229,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             city = safe_strip(row["市区町村名(漢字)"])
             town = safe_strip(row["町域名(漢字)"])
             full_norm = normalize_address(f"{pref}{city}{town}")
-            # デバッグ: 特定住所のマスタ候補確認
-            if any(key in addr_norm for key in ["箕沖町", "長崎", "荒井町新浜"]):
-                _debug(f"[addr_match_debug] cand_pref addr_norm={addr_norm} full_norm={full_norm} len(addr)={len(addr_norm)} len(full)={len(full_norm)}")
             if full_norm and addr_norm.startswith(full_norm):
                 if len(addr_norm) < len(full_norm):
                     ambiguous_prefix = True
@@ -258,8 +248,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             idx_used = best_row.name
             match_flag = "pref_city_town"
             return result, idx_used, match_flag
-        else:
-            _debug(f"[addr_match_debug] town_not_found_pref addr_norm={addr_norm}")
         if paren_ambiguous or ambiguous_prefix:
             return result, None, "pref_city"
 
@@ -283,7 +271,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
 
     # 都道府県なし: 市区町村グループで判定
     if city_groups is not None:
-        # まず市区町村から都道府県が一意に決まるケース（この後も町域探索を続ける）
+        # 市区町村から都道府県が一意に決まるケース（この後も町域探索を続ける）
         inferred = _infer_prefecture_from_city(addr_norm, city_groups)
         if inferred:
             row, flag = inferred
@@ -304,13 +292,12 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             # 部分一致だと「中央区」で別の都府県に誤ヒットするため前方一致のみ
             if city_norm and addr_norm.startswith(city_norm):
                 ambiguous_prefix = False
+                paren_ambiguous = _has_paren_ambiguity(addr_norm, None, df_city, city_norm_override=city_norm)
                 best_row = None
                 best_len = 0
                 for _, row in df_city.iterrows():
                     town = safe_strip(row["町域名(漢字)"])
                     target = f"{city_norm}{normalize_address(town)}"
-                    if any(key in addr_norm for key in ["箕沖町", "長崎", "荒井町新浜"]):
-                        _debug(f"[addr_match_debug] cand_no_pref addr_norm={addr_norm} target={target} len(addr)={len(addr_norm)} len(target)={len(target)}")
                     if target and addr_norm.startswith(target):
                         if len(addr_norm) < len(target):
                             ambiguous_prefix = True
@@ -318,7 +305,7 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                         if len(target) > best_len:
                             best_len = len(target)
                             best_row = row
-                if best_row is not None:
+                if best_row is not None and not paren_ambiguous:
                     result.update({
                         "地方コード": best_row.get("地方コード"),
                         "地方名": best_row.get("地方名"),
@@ -332,12 +319,9 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                     idx_used = best_row.name
                     match_flag = "no_pref_city_town"
                     return result, idx_used, match_flag
-                else:
-                    # デバッグ: 町域が見つからなかった（都道府県なし系）
-                    _debug(f"[addr_match_debug] town_not_found_no_pref addr_norm={addr_norm}")
-                if ambiguous_prefix:
+                if paren_ambiguous or ambiguous_prefix:
                     return result, None, "no_pref_city"
-                # 町域は不明だが市区町村が一意
+                # 町域不明だが市区町村が一意
                 row = df_city.iloc[0]
                 result.update({
                     "地方コード": row.get("地方コード"),
@@ -509,8 +493,8 @@ def generate_queries(addr: str) -> List[Tuple[str, str]]:
         for token in ["市", "区"]:
             if token in addr:
                 queries.append((addr.split(token)[0] + token, "city"))
-        if "県" in addr:
-            queries.append((addr.split("県")[0] + "県", "pref"))
+        if "省" in addr:
+            queries.append((addr.split("省")[0] + "省", "pref"))
         elif "都" in addr:
             queries.append((addr.split("都")[0] + "都", "pref"))
         elif "府" in addr:
@@ -586,7 +570,7 @@ def geocode_addresses(addresses: List[str], user_agent: str, cache: Dict[str, Tu
 
 def add_geocode_columns(df: pd.DataFrame, addr_cols: List[str], results: Dict[str, Tuple[Optional[float], Optional[float], str]]) -> pd.DataFrame:
     out = df.copy()
-
+    # ジオコーディング結果を各住所列に付与
     for col in addr_cols:
         lat_col = f"{col}_lat"
         lon_col = f"{col}_lon"
