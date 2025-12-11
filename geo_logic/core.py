@@ -227,25 +227,57 @@ def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[
     done = 0
     if used_zip_codes is None:
         used_zip_codes = set()
+
+    # 郵便番号ごとに付与内容とフラグを決める
+    master_zip = master.copy()
+    master_zip["郵便番号"] = master_zip["郵便番号"].apply(pad_zip)
+    zip_mapping: Dict[str, Tuple[Dict[str, Optional[str]], Optional[str]]] = {}
+    for zip_code, grp in master_zip.groupby("郵便番号"):
+        pref_city_pairs = {(row["都道府県名(漢字)"], row["市区町村名(漢字)"]) for _, row in grp.iterrows()}
+        if len(pref_city_pairs) == 1:
+            base = grp.iloc[0]
+            record = {col: base.get(col) for col in MASTER_COLUMNS_ZIP}
+            if len(grp) == 1:
+                flag = "unique_full"  # 郵便番号＋都道府県＋市区町村＋町域が一意
+            else:
+                # 同じ郵便番号で町域が複数 → 町域系は付与しない
+                record["町域名(漢字)"] = None
+                if "小字名、丁目、番地等（漢字）" in record:
+                    record["小字名、丁目、番地等（漢字）"] = None
+                flag = "multi_town"  # 郵便番号＋都道府県＋市区町村は一意だが町域が複数
+        else:
+            # 都道府県・市区町村の組み合わせも複数 → 郵便番号のみ付与
+            record = {col: None for col in MASTER_COLUMNS_ZIP}
+            record["郵便番号"] = zip_code
+            flag = "ambiguous_pref_city"
+        zip_mapping[zip_code] = (record, flag)
+
     for col in zip_cols:
         if col not in result.columns:
             done += 1
             if progress:
                 progress(done, total, f"{col} 列なし")
             continue
-        tmp = result[[col]].rename(columns={col: "郵便番号"})
-        tmp["郵便番号"] = tmp["郵便番号"].apply(pad_zip)
-        master_zip = master.copy()
-        master_zip["郵便番号"] = master_zip["郵便番号"].apply(pad_zip)
-        merged = pd.merge(tmp, master_zip, on="郵便番号", how="left")
+
+        zip_flag_col = f"{col}_zip_match_flag"
+        if zip_flag_col not in result.columns:
+            result[zip_flag_col] = None
         for mcol in MASTER_COLUMNS_ZIP:
             new_col = f"{col}_{mcol}"
             if new_col not in result.columns:
-                result[new_col] = merged[mcol]
-            else:
-                result[new_col] = result[new_col].fillna(merged[mcol])
-        matched_zips = merged["郵便番号"].dropna().unique().tolist()
-        used_zip_codes.update(matched_zips)
+                result[new_col] = None
+
+        tmp_zip = result[col].apply(pad_zip)
+        matched_zips_local = []
+        for idx, z in tmp_zip.items():
+            rec, flag = zip_mapping.get(z, ({c: None for c in MASTER_COLUMNS_ZIP}, None))
+            for mcol in MASTER_COLUMNS_ZIP:
+                result.at[idx, f"{col}_{mcol}"] = rec.get(mcol)
+            result.at[idx, zip_flag_col] = flag
+            if flag:
+                matched_zips_local.append(z)
+        used_zip_codes.update(matched_zips_local)
+
         done += 1
         if progress:
             progress(done, total, f"{col} 突合完了")
