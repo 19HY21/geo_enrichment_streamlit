@@ -7,6 +7,7 @@ Geo Enrichment Tool (Streamlit)
 """
 
 import io
+import base64
 import os
 import sys
 from datetime import datetime
@@ -69,6 +70,8 @@ def _run_pipeline(
     progress = st.progress(0)
     status = st.empty()
     live_download_section = st.container()
+    with live_download_section:
+        st.markdown("住所/ジオのチャンクダウンロード（処理中も利用可）")
 
     weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
     enabled_phases = ["zip"]
