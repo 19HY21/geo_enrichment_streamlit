@@ -102,7 +102,7 @@ def _run_pipeline(
     df_proc_in = df_input.copy() if process_mask is None else df_input.loc[process_mask].copy()
     _log(
         log_box,
-        f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}",
+        f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)}",
     )
 
     # 必要列のみ抽出
@@ -189,6 +189,7 @@ def _run_pipeline(
             pct = processed / max(total_rows, 1) * 100
             prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
             _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
+            _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
 
         df_work = pd.concat(addr_chunks).sort_index()
         prog_bar("addr", 100, "[addr] 完了")
@@ -369,7 +370,7 @@ def main():
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
     parquet_uploader = st.file_uploader(
-        "突合済みParquetをアップロード（任意・複数可）",
+        "突合済み住所Parquetをアップロード（任意・複数可）",
         type=["parquet"],
         key="parquet_uploader",
         accept_multiple_files=True,
@@ -414,12 +415,17 @@ def main():
         zip_cols = st.multiselect("郵便番号列を選択", options=df_input.columns.tolist())
         addr_cols = st.multiselect("住所列を選択", options=df_input.columns.tolist())
         geocode_enabled = st.checkbox("緯度経度を付与する", value=False)
-        cache_uploader = st.file_uploader("キャッシュParquetをアップロード（任意）", type=["parquet"])
+        cache_uploader = st.file_uploader(
+            "キャッシュParquetをアップロード（任意・複数可）", type=["parquet"], accept_multiple_files=True
+        )
 
         uploaded_cache = None
         if cache_uploader:
             try:
-                cache_df = pd.read_parquet(io.BytesIO(cache_uploader.read()))
+                frames = []
+                for f in cache_uploader:
+                    frames.append(pd.read_parquet(io.BytesIO(f.read())))
+                cache_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
                 required_cols = {"address", "lat", "lon", "flag"}
                 if not required_cols.issubset(set(cache_df.columns)):
                     raise ValueError("必要なカラム(address, lat, lon, flag)が見つかりません")
@@ -429,7 +435,7 @@ def main():
                     if pd.notna(row.get("address"))
                 }
             except Exception as e:
-                st.warning(f"キャッシュParquetの読込に失敗しました: {e}")
+                st.warning(f"キャッシュParquetの読み込みに失敗しました: {e}")
 
         # Parquetがある場合は住所列キーでParquetを優先マージ
         if df_parquet is not None and addr_cols:
@@ -490,9 +496,9 @@ def main():
                     f"ベースのみ={len(base_only)} / Parquetのみ={len(pq_only)}"
                 )
 
-                # Parquetで上書きした行は処理スキップ、未マッチのみ突合
-                process_mask = ~df_input["__is_parquet"]
-                chunk_offset = int(df_input["__is_parquet"].sum())
+                # Parquet一致行も含めて再処理するためマスクはかけない
+                process_mask = None
+                chunk_offset = 0
 
         run_clicked = st.button("実行 / 再実行", type="primary")
 
@@ -531,7 +537,7 @@ def main():
         download_section = st.container()
         with download_section:
             if st.session_state.get("addr_chunk_downloads"):
-                st.subheader("住所突合チャンクのダウンロード")
+                st.subheader("住所突合Parquetのダウンロード（次回再利用用）")
                 for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
                     st.download_button(
                         label=item["label"],
@@ -542,7 +548,7 @@ def main():
                     )
 
             if st.session_state.get("geo_chunk_downloads"):
-                st.subheader("ジオコーディングチャンクのダウンロード")
+                st.subheader("ジオコーディンParquetをダウンロード（次回再利用用）")
                 for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
                     st.download_button(
                         label=item["label"],
