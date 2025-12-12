@@ -25,15 +25,15 @@ from geo_logic import core as logic  # noqa: E402
 
 CACHE_DIR = logic.CACHE_DIR
 OUTPUT_SUFFIX = logic.OUTPUT_SUFFIX
-BATCH_SIZE_DEFAULT = 1_000 # ジオコーディング一括処理サイズ（住所数）
-attach_master_by_address = logic.attach_master_by_address # 住所突合
-attach_master_by_zip = logic.attach_master_by_zip # 郵便番号突合
-geocode_addresses = logic.geocode_addresses # ジオコーディング
-load_cache = logic.load_cache # キャッシュ読込
-read_master = logic.read_master # マスタ読込
-save_cache = logic.save_cache # キャッシュ保存
-add_geocode_columns = logic.add_geocode_columns # 緯度経度列付与
-normalize_address = logic.normalize_address # 住所正規化
+BATCH_SIZE_DEFAULT = 1_000  # ジオコーディング一括処理サイズ（住所数）
+attach_master_by_address = logic.attach_master_by_address  # 住所突合
+attach_master_by_zip = logic.attach_master_by_zip  # 郵便番号突合
+geocode_addresses = logic.geocode_addresses  # ジオコーディング
+load_cache = logic.load_cache  # キャッシュ読込
+read_master = logic.read_master  # マスタ読込
+save_cache = logic.save_cache  # キャッシュ保存
+add_geocode_columns = logic.add_geocode_columns  # 緯度経度列付与
+normalize_address = logic.normalize_address  # 住所正規化
 
 
 def _log(log_box, msg: str):
@@ -165,34 +165,34 @@ def _run_pipeline(
                     chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
                 )
                 addr_chunks.append(chunk)
-            chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
-            chunk_path = os.path.join(chunk_dir, chunk_fname)
-            chunk.to_parquet(chunk_path, index=False)
-            try:
-                buf = io.BytesIO()
-                chunk.to_parquet(buf, index=False)
-                buf.seek(0)
-                st.session_state["addr_chunk_downloads"].append(
-                    {
-                        "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                        "data": buf.getvalue(),
-                        "name": chunk_fname,
-                    }
-                )
-                # 実行中もダウンロードを表示（進捗バー直下）
-                with live_download_section:
-                    st.download_button(
-                        label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                        data=buf.getvalue(),
-                        file_name=chunk_fname,
-                        mime="application/octet-stream",
-                        key=f"addr_chunk_live_{start}_{end}_{chunk_offset}",
+                chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
+                chunk_path = os.path.join(chunk_dir, chunk_fname)
+                chunk.to_parquet(chunk_path, index=False)
+                try:
+                    buf = io.BytesIO()
+                    chunk.to_parquet(buf, index=False)
+                    buf.seek(0)
+                    st.session_state["addr_chunk_downloads"].append(
+                        {
+                            "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                            "data": buf.getvalue(),
+                            "name": chunk_fname,
+                        }
                     )
-            except Exception:
-                pass
-            processed = end
-            pct = processed / max(total_rows, 1) * 100
-            prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
+                    # 実行中もダウンロードを表示（進捗バー直下）
+                    with live_download_section:
+                        st.download_button(
+                            label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                            data=buf.getvalue(),
+                            file_name=chunk_fname,
+                            mime="application/octet-stream",
+                            key=f"addr_chunk_live_{start}_{end}_{chunk_offset}",
+                        )
+                except Exception:
+                    pass
+                processed = end
+                pct = processed / max(total_rows, 1) * 100
+                prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
                 _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
                 _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
 
