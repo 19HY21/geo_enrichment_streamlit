@@ -208,11 +208,12 @@ def _run_pipeline(
             all_addrs.extend(df_work[col].dropna().tolist())
         unique_addrs = [a for a in pd.Series(all_addrs).dropna().unique().tolist() if normalize_address(a)]
         total_unique = len(unique_addrs)
-        _log(log_box, f"ユニーク住所数: {total_unique}件 / バッチサイズ: {batch_size}")
+        geo_chunk_size = 1000
+        _log(log_box, f"ユニーク住所数: {total_unique}件 / ジオコードチャンクサイズ: {geo_chunk_size}")
 
         overall_done = 0
-        for start in range(0, total_unique, batch_size):
-            end = min(start + batch_size, total_unique)
+        for start in range(0, total_unique, geo_chunk_size):
+            end = min(start + geo_chunk_size, total_unique)
             chunk = unique_addrs[start:end]
 
             def geo_prog(done, total, kind):
@@ -413,14 +414,23 @@ def main():
         zip_cols = st.multiselect("郵便番号列を選択", options=df_input.columns.tolist())
         addr_cols = st.multiselect("住所列を選択", options=df_input.columns.tolist())
         geocode_enabled = st.checkbox("緯度経度を付与する", value=False)
-        cache_uploader = st.file_uploader("キャッシュJSONをアップロード（任意）", type=["json"])
+        cache_uploader = st.file_uploader("キャッシュParquetをアップロード（任意）", type=["parquet"])
 
         uploaded_cache = None
         if cache_uploader:
             try:
-                uploaded_cache = json.load(io.BytesIO(cache_uploader.read()))
-            except Exception:
-                st.warning("キャッシュJSONの読込に失敗しました")
+                cache_df = pd.read_parquet(io.BytesIO(cache_uploader.read()))
+                # 想定カラム: address, lat, lon, flag
+                required_cols = {"address", "lat", "lon", "flag"}
+                if not required_cols.issubset(set(cache_df.columns)):
+                    raise ValueError("必要なカラム(address, lat, lon, flag)が見つかりません")
+                uploaded_cache = {
+                    str(row["address"]): (row["lat"], row["lon"], row["flag"])
+                    for _, row in cache_df.iterrows()
+                    if pd.notna(row.get("address"))
+                }
+            except Exception as e:
+                st.warning(f"キャッシュParquetの読込に失敗しました: {e}")
 
         # Parquetがある場合は住所列キーでParquetを優先マージ
         if df_parquet is not None and addr_cols:
@@ -511,22 +521,7 @@ def main():
                 "data": buf.getvalue(),
                 "name": fname,
             }
-            if os.path.exists(cache_path):
-                with open(cache_path, "rb") as f:
-                    st.session_state["cache_file"] = {
-                        "data": f.read(),
-                        "name": os.path.basename(cache_path),
-                    }
-
-        # 実行ボタンの直下に結果ダウンロードを配置
-        if st.session_state.get("result_file"):
-            result_placeholder.download_button(
-                label="結果データをダウンロード",
-                data=st.session_state["result_file"]["data"],
-                file_name=st.session_state["result_file"]["name"],
-                mime="application/octet-stream",
-                key="result_download",
-            )
+            # cache_path は内部利用のみ。UIには出さない。
 
         if st.session_state.get("addr_chunk_downloads"):
             st.subheader("住所突合チャンクのダウンロード")
@@ -550,15 +545,15 @@ def main():
                     key=f"geo_chunk_{i}",
                 )
 
-        if st.session_state.get("cache_file"):
-            download_cache_placeholder.download_button(
-                label="キャッシュJSONをダウンロード（次回再利用用）",
-                data=st.session_state["cache_file"]["data"],
-                file_name=st.session_state["cache_file"]["name"],
-                mime="application/json",
-                key="cache_download",
+        # 結果データを住所/ジオコードチャンクの下に配置
+        if st.session_state.get("result_file"):
+            result_placeholder.download_button(
+                label="結果データをダウンロード",
+                data=st.session_state["result_file"]["data"],
+                file_name=st.session_state["result_file"]["name"],
+                mime="application/octet-stream",
+                key="result_download",
             )
-
 
 if __name__ == "__main__":
     main()
