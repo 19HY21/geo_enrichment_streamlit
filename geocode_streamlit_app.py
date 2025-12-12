@@ -71,7 +71,7 @@ def _run_pipeline(
     status = st.empty()
     live_download_section = st.container()
     with live_download_section:
-        st.markdown("住所/ジオのチャンクダウンロード（処理中も利用可）")
+        st.markdown("住所/ジオのチャンクダウンロード")
 
     weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
     enabled_phases = ["zip"]
@@ -108,7 +108,7 @@ def _run_pipeline(
     df_proc_in = df_input.copy()
     _log(
         log_box,
-        f"入力件数: {total_rows_all} / 対象件数(住所突合対象): "
+        f"入力件数: {total_rows_all} / 住所突合対象件数: "
         f"{len(df_input) if process_mask is None else process_mask.sum()}",
     )
 
@@ -177,7 +177,7 @@ def _run_pipeline(
                     chunk.to_parquet(buf, index=False)
                     buf.seek(0)
                     b64 = base64.b64encode(buf.getvalue()).decode()
-                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">?????? {start+1+chunk_offset}-{end+chunk_offset} ??????? (Parquet)</a>'
+                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
                     st.session_state["addr_chunk_downloads"].append(href)
                     st.markdown(href, unsafe_allow_html=True)
                 except Exception:
