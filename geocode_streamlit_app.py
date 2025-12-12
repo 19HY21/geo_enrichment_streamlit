@@ -180,6 +180,10 @@ def _run_pipeline(
                             "name": chunk_fname,
                         }
                     )
+                    # 実行中から表示（クリックで処理が止まらないよう data URI 形式）
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
+                    st.markdown(href, unsafe_allow_html=True)
                 except Exception:
                     pass
                 processed = end
@@ -256,6 +260,10 @@ def _run_pipeline(
                         "name": geo_chunk_fname,
                     }
                 )
+                # 実行中から表示（クリックで処理が止まらないよう data URI 形式）
+                b64 = base64.b64encode(geo_bytes.getvalue()).decode()
+                href = f'<a href="data:application/octet-stream;base64,{b64}" download="{geo_chunk_fname}">ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
+                st.markdown(href, unsafe_allow_html=True)
             except Exception:
                 pass
             overall_done = end
