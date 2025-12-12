@@ -37,6 +37,7 @@ normalize_address = logic.normalize_address
 
 
 def _log(log_box, msg: str):
+    # ログ追記
     ts = datetime.now().strftime("%H:%M:%S")
     logs = st.session_state.setdefault("logs", [])
     logs.append(f"[{ts}] {msg}")
@@ -44,6 +45,7 @@ def _log(log_box, msg: str):
 
 
 def _run_pipeline(
+    # 主要処理パイプライン
     df_input: pd.DataFrame,
     sheet_name: str,
     file_kind: str,
@@ -75,6 +77,7 @@ def _run_pipeline(
     total_weight = sum(weights[p] for p in enabled_phases)
 
     def set_progress(phase: str, pct: float, text: str):
+        # 進捗バー更新
         offset = 0
         for p in ["zip", "addr", "geo", "out"]:
             if p == phase:
@@ -91,16 +94,16 @@ def _run_pipeline(
     def prog_bar(phase, pct, text):
         set_progress(phase, pct, text)
 
-    _log(log_box, "マスタ読込開始 /")
+    _log(log_box, "マスタ読込開始")
     master_df = read_master()
-    _log(log_box, "マスタ読込完了 /")
+    _log(log_box, "マスタ読込完了")
     total_rows_all = len(df_input)
     # process_mask は住所突合をスキップする行のマークとしてのみ利用し、全体処理は全行を対象とする
     df_proc_in = df_input.copy()
     _log(
         log_box,
         f"入力件数: {total_rows_all} / 対象件数(住所突合対象): "
-        f"{len(df_input) if process_mask is None else process_mask.sum()} /",
+        f"{len(df_input) if process_mask is None else process_mask.sum()}",
     )
 
     cols_needed = list(dict.fromkeys(zip_cols + addr_cols))
@@ -128,7 +131,7 @@ def _run_pipeline(
 
     # 郵便番号突合
     if zip_cols:
-        _log(log_box, "郵便番号突合開始 /")
+        _log(log_box, "郵便番号突合開始")
 
         def zip_prog(done, total, detail):
             pct = done / max(total, 1) * 100
@@ -138,14 +141,14 @@ def _run_pipeline(
             df_work, master_df, zip_cols, progress=zip_prog, used_zip_codes=used_zip_codes
         )
         prog_bar("zip", 100, "[zip] 完了")
-        _log(log_box, f"郵便番号突合完了: {len(used_zip_codes)}件 /")
+        _log(log_box, f"郵便番号突合完了: {len(used_zip_codes)}件")
 
     # 住所突合（チャンク＋オンディスク保存）: 突合済みParquetと一致した行はスキップ、未一致のみ処理
     if addr_cols:
         addr_mask = process_mask
         df_addr_target = df_work if addr_mask is None else df_work.loc[addr_mask].copy()
         total_rows = len(df_addr_target)
-        _log(log_box, f"住所突合開始 / 対象件数: {total_rows} /")
+        _log(log_box, f"住所突合開始 / 対象件数: {total_rows}件")
         if total_rows > 0:
             chunk_size = 1000
             addr_chunks = []
@@ -200,7 +203,7 @@ def _run_pipeline(
 
     geo_results = {}
     if addr_cols and geocode_enabled:
-        _log(log_box, "ジオコーディング開始 /")
+        _log(log_box, "ジオコーディング開始")
         prog_bar("geo", 0, "[geo] 処理開始")
         all_addrs = []
         for col in addr_cols:
