@@ -307,29 +307,13 @@ def _run_pipeline(
         if st.session_state.get("addr_chunk_downloads"):
             st.markdown("住所突合チャンクのダウンロード")
             for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
-                if isinstance(item, str):
-                    st.markdown(item, unsafe_allow_html=True)
-                else:
-                    st.download_button(
-                        label=item["label"],
-                        data=item["data"],
-                        file_name=item["name"],
-                        mime="application/octet-stream",
-                        key=f"addr_chunk_{i}",
-                    )
+                # URL版のみ表示
+                st.markdown(item if isinstance(item, str) else item.get("label", ""), unsafe_allow_html=True)
         if st.session_state.get("geo_chunk_downloads"):
             st.markdown("ジオコーディングチャンクのダウンロード")
             for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
-                if isinstance(item, str):
-                    st.markdown(item, unsafe_allow_html=True)
-                else:
-                    st.download_button(
-                        label=item["label"],
-                        data=item["data"],
-                        file_name=item["name"],
-                        mime="application/octet-stream",
-                        key=f"geo_chunk_{i}",
-                    )
+                # URL版のみ表示
+                st.markdown(item if isinstance(item, str) else item.get("label", ""), unsafe_allow_html=True)
         if st.session_state.get("result_file"):
             st.download_button(
                 label="結果データをダウンロード",
