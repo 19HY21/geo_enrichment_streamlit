@@ -379,10 +379,22 @@ def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[
                     record["小字名、丁目、番地等（漢字）"] = None
                 flag = "multi_town"  # 郵便番号＋都道府県＋市区町村は一意だが町域が複数
         else:
-            # 都道府県・市区町村の組み合わせも複数 → 郵便番号のみ付与
-            record = {col: None for col in MASTER_COLUMNS_ZIP}
-            record["郵便番号"] = zip_code
-            flag = "ambiguous_pref_city"
+            # 都道府県が単一で市区町村が複数 → 都道府県だけ付与
+            pref_set = set(grp["都道府県名(漢字)"].dropna().unique().tolist())
+            if len(pref_set) == 1:
+                base = grp.iloc[0]
+                record = {col: None for col in MASTER_COLUMNS_ZIP}
+                record["郵便番号"] = zip_code
+                record["地方コード"] = base.get("地方コード")
+                record["地方名"] = base.get("地方名")
+                record["都道府県コード"] = base.get("都道府県コード")
+                record["都道府県名(漢字)"] = base.get("都道府県名(漢字)")
+                flag = "ambiguous_pref_city"  # 県だけ確定、都市は複数
+            else:
+                # 都道府県も複数 → 郵便番号のみ付与
+                record = {col: None for col in MASTER_COLUMNS_ZIP}
+                record["郵便番号"] = zip_code
+                flag = "ambiguous_pref_city"
         zip_mapping[zip_code] = (record, flag)
 
     for col in zip_cols:
@@ -517,26 +529,35 @@ def generate_queries(addr: str) -> List[Tuple[str, str]]:
 
 
 def load_cache(cache_path: str) -> Dict[str, Tuple[Optional[float], Optional[float], str]]:
-    # ジオコーディングキャッシュ読み込み
+    # ジオコーディングキャッシュ読み込み（Parquetのみ）
     if not cache_path or not os.path.exists(cache_path):
         return {}
     try:
-        with open(cache_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {k: (v[0], v[1], v[2]) for k, v in data.items()}
+        df = pd.read_parquet(cache_path)
+        if df.empty:
+            return {}
+        return {
+            str(row["address"]): (row["lat"], row["lon"], row["flag"])
+            for _, row in df.iterrows()
+            if "address" in df.columns
+        }
     except Exception:
         return {}
 
 
 def save_cache(cache_path: str, cache: Dict[str, Tuple[Optional[float], Optional[float], str]]):
-    # ジオコーディングキャッシュ保存
+    # ジオコーディングキャッシュ保存（Parquetのみ）
     if not cache_path:
         return
     try:
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        serializable = {k: [v[0], v[1], v[2]] for k, v in cache.items()}
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(serializable, f, ensure_ascii=False)
+        df = pd.DataFrame(
+            [
+                {"address": k, "lat": v[0], "lon": v[1], "flag": v[2]}
+                for k, v in cache.items()
+            ]
+        )
+        df.to_parquet(cache_path, index=False)
     except Exception:
         pass
 
@@ -605,3 +626,5 @@ def add_geocode_columns(df: pd.DataFrame, addr_cols: List[str], results: Dict[st
                 out.at[idx, lon_col] = res[1]
                 out.at[idx, flag_col] = res[2]
     return out
+
+

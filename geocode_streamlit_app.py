@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Geo Enrichment Tool (Streamlit)
-- geo_logic/core を利用し、ブラウザから郵便番号/住所突合とジオコーディングを実行
-- Streamlit Cloud でも動くように最小限のメモリで動作するよう調整
+- geo_logic/core 繧貞茜逕ｨ縺励√ヶ繝ｩ繧ｦ繧ｶ縺九ｉ驛ｵ萓ｿ逡ｪ蜿ｷ/菴乗園遯∝粋縺ｨ繧ｸ繧ｪ繧ｳ繝ｼ繝・ぅ繝ｳ繧ｰ繧貞ｮ溯｡・- Streamlit Cloud 縺ｧ繧ょ虚縺上ｈ縺・↓譛蟆城剞縺ｮ繝｡繝｢繝ｪ縺ｧ蜍穂ｽ懊☆繧九ｈ縺・ｪｿ謨ｴ
 """
 
 import io
@@ -21,13 +20,12 @@ if BASE_DIR not in sys.path:
 
 from geo_logic import core as logic  # noqa: E402
 
-# マスタパスをリポジトリ内 data に固定
-logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.xlsx")
+# 繝槭せ繧ｿ繝代せ繧偵Μ繝昴ず繝医Μ蜀・data 縺ｫ蝗ｺ螳・logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.xlsx")
 
-# 利用関数
+# 蛻ｩ逕ｨ髢｢謨ｰ
 CACHE_DIR = logic.CACHE_DIR
 OUTPUT_SUFFIX = logic.OUTPUT_SUFFIX
-BATCH_SIZE_DEFAULT = 5000
+BATCH_SIZE_DEFAULT = 5_000
 attach_master_by_address = logic.attach_master_by_address
 attach_master_by_zip = logic.attach_master_by_zip
 geocode_addresses = logic.geocode_addresses
@@ -68,7 +66,7 @@ def _run_pipeline(
     progress = st.progress(0)
     status = st.empty()
 
-    # フェーズの重み
+    # 繝輔ぉ繝ｼ繧ｺ縺ｮ驥阪∩
     weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
     enabled_phases = ["zip"]
     if addr_cols:
@@ -95,22 +93,22 @@ def _run_pipeline(
     def prog_bar(phase, pct, text):
         set_progress(phase, pct, text)
 
-    _log(log_box, "マスタ読込開始")
+    _log(log_box, "繝槭せ繧ｿ隱ｭ霎ｼ髢句ｧ・)
     master_df = read_master()
-    _log(log_box, "マスタ読込完了")
+    _log(log_box, "繝槭せ繧ｿ隱ｭ霎ｼ螳御ｺ・)
     total_rows_all = len(df_input)
     df_proc_in = df_input.copy() if process_mask is None else df_input.loc[process_mask].copy()
-    _log(log_box, f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}")
+    _log(log_box, f"蜈･蜉帑ｻｶ謨ｰ: {total_rows_all} / 蟇ｾ雎｡莉ｶ謨ｰ: {len(df_proc_in)}") # 蜈ｨ菴謎ｻｶ謨ｰ縺ｨ蜃ｦ逅・ｯｾ雎｡莉ｶ謨ｰ
 
-    # 必要列のみ抽出
+    # 蠢・ｦ∝・縺ｮ縺ｿ謚ｽ蜃ｺ
     cols_needed = list(dict.fromkeys(zip_cols + addr_cols))
     df_work = df_proc_in[cols_needed].copy() if cols_needed else df_proc_in.copy()
     used_zip_codes = set()
     used_master_idx = set()
 
-    # 全行がParquet由来などで処理対象が無い場合はそのまま出力を返す
+    # 蜈ｨ陦後′Parquet逕ｱ譚･縺ｪ縺ｩ縺ｧ蜃ｦ逅・ｯｾ雎｡縺檎┌縺・ｴ蜷医・縺昴・縺ｾ縺ｾ蜃ｺ蜉帙ｒ霑斐☆
     if df_work.empty:
-        _log(log_box, "処理対象の行がありません（全件Parquet由来など）。")
+        _log(log_box, "蜃ｦ逅・ｯｾ雎｡縺ｮ陦後′縺ゅｊ縺ｾ縺帙ｓ・亥・莉ｶParquet逕ｱ譚･縺ｪ縺ｩ・峨・)
         out_base = base_name or "output"
         df_out_merge = df_input.copy()
         for helper_col in ["__merge_key", "__is_parquet"]:
@@ -127,24 +125,23 @@ def _run_pipeline(
             fname = f"{out_base}{OUTPUT_SUFFIX}.csv"
         return buf, fname, df_out_merge, os.path.join(CACHE_DIR, "streamlit_local_cache.json")
 
-    # 郵便番号突合
+    # 驛ｵ萓ｿ逡ｪ蜿ｷ遯∝粋
     if zip_cols:
-        _log(log_box, f"郵便番号突合開始: {zip_cols}")
+        _log(log_box, "驛ｵ萓ｿ逡ｪ蜿ｷ遯∝粋髢句ｧ・)
 
         def zip_prog(done, total, detail):
             pct = done / max(total, 1) * 100
-            prog_bar("zip", pct, f"[郵便番号] {detail}")
+            prog_bar("zip", pct, f"[驛ｵ萓ｿ逡ｪ蜿ｷ] {detail}")
 
         df_work = attach_master_by_zip(
             df_work, master_df, zip_cols, progress=zip_prog, used_zip_codes=used_zip_codes
         )
-        prog_bar("zip", 100, "[郵便番号] 完了")
-        _log(log_box, f"郵便番号突合完了 使用郵便番号: {len(used_zip_codes)}件")
+        prog_bar("zip", 100, "[驛ｵ萓ｿ逡ｪ蜿ｷ] 螳御ｺ・)
+        _log(log_box, f"驛ｵ萓ｿ逡ｪ蜿ｷ遯∝粋螳御ｺ・菴ｿ逕ｨ驛ｵ萓ｿ逡ｪ蜿ｷ: {len(used_zip_codes)}莉ｶ")
 
-    # 住所突合（チャンク＋オンディスク保存）
-    if addr_cols:
-        _log(log_box, f"住所突合開始: {addr_cols}")
-        prog_bar("addr", 0, "[addr] 処理開始")
+    # 菴乗園遯∝粋・医メ繝｣繝ｳ繧ｯ・九が繝ｳ繝・ぅ繧ｹ繧ｯ菫晏ｭ假ｼ・    if addr_cols:
+        _log(log_box, "菴乗園遯∝粋髢句ｧ・)
+        prog_bar("addr", 0, "[addr] 蜃ｦ逅・幕蟋・)
         chunk_size = 1000
         addr_chunks = []
         total_rows = len(df_work)
@@ -168,13 +165,13 @@ def _run_pipeline(
                 buf.seek(0)
                 st.session_state["addr_chunk_downloads"].append(
                     {
-                        "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                        "label": f"菴乗園繝√Ε繝ｳ繧ｯ {start+1+chunk_offset}-{end+chunk_offset} 繧偵ム繧ｦ繝ｳ繝ｭ繝ｼ繝・(Parquet)",
                         "data": buf.getvalue(),
                         "name": chunk_fname,
                     }
                 )
                 addr_dl_box.download_button(
-                    label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                    label=f"菴乗園繝√Ε繝ｳ繧ｯ {start+1+chunk_offset}-{end+chunk_offset} 繧偵ム繧ｦ繝ｳ繝ｭ繝ｼ繝・(Parquet)",
                     data=buf.getvalue(),
                     file_name=chunk_fname,
                     mime="application/octet-stream",
@@ -185,31 +182,31 @@ def _run_pipeline(
             processed = end
             pct = processed / max(total_rows, 1) * 100
             prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
-            _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
+            _log(log_box, f"[addr] {processed}/{total_rows} ({pct:.1f}%) chunk {start+1}-{end} 菫晏ｭ・ {chunk_path}")
 
         df_work = pd.concat(addr_chunks).sort_index()
-        prog_bar("addr", 100, "[addr] 完了")
-        _log(log_box, f"住所突合完了 使用行: {len(used_master_idx)}件")
+        prog_bar("addr", 100, "[addr] 螳御ｺ・)
+        _log(log_box, f"菴乗園遯∝粋螳御ｺ・菴ｿ逕ｨ陦・ {len(used_master_idx)}莉ｶ")
 
-    # ジオコーディング
+    # 繧ｸ繧ｪ繧ｳ繝ｼ繝・ぅ繝ｳ繧ｰ
     os.makedirs(CACHE_DIR, exist_ok=True)
-    local_cache_path = os.path.join(CACHE_DIR, "streamlit_local_cache.json")
+    local_cache_path = os.path.join(CACHE_DIR, "streamlit_local_cache.parquet")
     cache = load_cache(local_cache_path)
     if uploaded_cache:
         cache.update(uploaded_cache)
-    _log(log_box, f"キャッシュ読込: ローカル{len(cache)}件")
+    _log(log_box, f"繧ｭ繝｣繝・す繝･隱ｭ霎ｼ: 繝ｭ繝ｼ繧ｫ繝ｫ{len(cache)}莉ｶ")
 
     geo_results = {}
     if addr_cols and geocode_enabled:
-        _log(log_box, "ジオコーディング開始（ユニーク住所ベース）")
-        prog_bar("geo", 0, "[geo] 処理開始")
+        _log(log_box, "繧ｸ繧ｪ繧ｳ繝ｼ繝・ぅ繝ｳ繧ｰ髢句ｧ具ｼ医Θ繝九・繧ｯ菴乗園繝吶・繧ｹ・・)
+        prog_bar("geo", 0, "[geo] 蜃ｦ逅・幕蟋・)
         all_addrs = []
         for col in addr_cols:
             all_addrs.extend(df_work[col].dropna().tolist())
         unique_addrs = [a for a in pd.Series(all_addrs).dropna().unique().tolist() if normalize_address(a)]
         total_unique = len(unique_addrs)
         geo_chunk_size = 1000
-        _log(log_box, f"ユニーク住所数: {total_unique}件 / ジオコードチャンクサイズ: {geo_chunk_size}")
+        _log(log_box, f"繝ｦ繝九・繧ｯ菴乗園謨ｰ: {total_unique}莉ｶ / 繧ｸ繧ｪ繧ｳ繝ｼ繝峨メ繝｣繝ｳ繧ｯ繧ｵ繧､繧ｺ: {geo_chunk_size}")
 
         overall_done = 0
         for start in range(0, total_unique, geo_chunk_size):
@@ -224,7 +221,7 @@ def _run_pipeline(
             def geo_cache_save(c):
                 save_cache(local_cache_path, c)
 
-            _log(log_box, f"バッチ処理: {start+1}〜{end}件目")
+            _log(log_box, f"繝舌ャ繝∝・逅・ {start+1}縲悳end}莉ｶ逶ｮ")
             chunk_results, cache_hit, new_count = geocode_addresses(
                 chunk,
                 user_agent="GeoGUI_streamlit",
@@ -234,7 +231,7 @@ def _run_pipeline(
             )
             geo_results.update(chunk_results)
             save_cache(local_cache_path, cache)
-            # ジオコード結果チャンクをParquetでダウンロード可能にする
+            # 繧ｸ繧ｪ繧ｳ繝ｼ繝臥ｵ先棡繝√Ε繝ｳ繧ｯ繧単arquet縺ｧ繝繧ｦ繝ｳ繝ｭ繝ｼ繝牙庄閭ｽ縺ｫ縺吶ｋ
             try:
                 geo_df = pd.DataFrame(
                     [
@@ -248,13 +245,13 @@ def _run_pipeline(
                 geo_bytes.seek(0)
                 st.session_state["geo_chunk_downloads"].append(
                     {
-                        "label": f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                        "label": f"繧ｸ繧ｪ繧ｳ繝ｼ繝峨メ繝｣繝ｳ繧ｯ {start+1+chunk_offset}-{end+chunk_offset} 繧偵ム繧ｦ繝ｳ繝ｭ繝ｼ繝・(Parquet)",
                         "data": geo_bytes.getvalue(),
                         "name": geo_chunk_fname,
                     }
                 )
                 geo_dl_box.download_button(
-                    label=f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                    label=f"繧ｸ繧ｪ繧ｳ繝ｼ繝峨メ繝｣繝ｳ繧ｯ {start+1+chunk_offset}-{end+chunk_offset} 繧偵ム繧ｦ繝ｳ繝ｭ繝ｼ繝・(Parquet)",
                     data=geo_bytes.getvalue(),
                     file_name=geo_chunk_fname,
                     mime="application/octet-stream",
@@ -263,17 +260,16 @@ def _run_pipeline(
             except Exception:
                 pass
             overall_done = end
-            _log(log_box, f"バッチ完了 cache_hit={cache_hit} 新規={new_count} 累計={overall_done}/{total_unique}")
+            _log(log_box, f"繝舌ャ繝∝ｮ御ｺ・cache_hit={cache_hit} 譁ｰ隕・{new_count} 邏ｯ險・{overall_done}/{total_unique}")
 
     df_work = add_geocode_columns(df_work, addr_cols, geo_results)
     if not (addr_cols and geocode_enabled):
-        _log(log_box, "ジオコーディングはスキップ（住所未選択または緯度経度付与オフ）")
+        _log(log_box, "繧ｸ繧ｪ繧ｳ繝ｼ繝・ぅ繝ｳ繧ｰ縺ｯ繧ｹ繧ｭ繝・・・井ｽ乗園譛ｪ驕ｸ謚槭∪縺溘・邱ｯ蠎ｦ邨悟ｺｦ莉倅ｸ弱が繝包ｼ・)
 
     if geocode_enabled and addr_cols:
         save_cache(local_cache_path, cache)
 
-    # 出力生成（元データに突合結果をマージ）
-    out_base = base_name or "output"
+    # 蜃ｺ蜉帷函謌撰ｼ亥・繝・・繧ｿ縺ｫ遯∝粋邨先棡繧偵・繝ｼ繧ｸ・・    out_base = base_name or "output"
     df_out_merge = df_input.copy()
     for col in df_work.columns:
         df_out_merge.loc[df_work.index, col] = df_work[col]
@@ -292,9 +288,9 @@ def _run_pipeline(
         buf = _build_csv_output(df_out_merge)
         fname = f"{out_base}{OUTPUT_SUFFIX}.csv"
 
-    prog_bar("out", 50, "[out] 生成中")
-    _log(log_box, f"出力生成完了: {fname}")
-    prog_bar("out", 100, "完了")
+    prog_bar("out", 50, "[out] 逕滓・荳ｭ")
+    _log(log_box, f"蜃ｺ蜉帷函謌仙ｮ御ｺ・ {fname}")
+    prog_bar("out", 100, "螳御ｺ・)
     return buf, fname, df_out_merge, local_cache_path
 
 
@@ -321,7 +317,7 @@ def _build_excel_output(
             ws = writer.book["master"]
             highlight_idx = set(used_master_idx) if used_master_idx else set()
             if used_zip_codes:
-                matched = master_df[master_df["郵便番号"].isin(used_zip_codes)]
+                matched = master_df[master_df["驛ｵ萓ｿ逡ｪ蜿ｷ"].isin(used_zip_codes)]
                 highlight_idx.update(matched.index.tolist())
             if highlight_idx:
                 fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -362,12 +358,12 @@ def main():
     st.set_page_config(page_title="Geo Enrichment Tool", layout="wide")
     st.title("Geo Enrichment Tool")
     st.caption(
-        "住所・郵便番号から、日本郵政マスタを用いて都道府県・市区町村・政令指定都市などの地域情報と緯度経度を付与し、データを生成するアプリです。"
+        "菴乗園繝ｻ驛ｵ萓ｿ逡ｪ蜿ｷ縺九ｉ縲∵律譛ｬ驛ｵ謾ｿ繝槭せ繧ｿ繧堤畑縺・※驛ｽ驕灘ｺ懃恁繝ｻ蟶ょ玄逕ｺ譚代・謾ｿ莉､謖・ｮ夐・蟶ゅ↑縺ｩ縺ｮ蝨ｰ蝓滓ュ蝣ｱ縺ｨ邱ｯ蠎ｦ邨悟ｺｦ繧剃ｻ倅ｸ弱＠縲√ョ繝ｼ繧ｿ繧堤函謌舌☆繧九い繝励Μ縺ｧ縺吶・
     )
 
-    uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
+    uploaded = st.file_uploader("蜈･蜉帙ヵ繧｡繧､繝ｫ繧帝∈謚・(Excel/CSV)", type=["csv", "xlsx", "xls"])
     parquet_uploader = st.file_uploader(
-        "突合済みParquetをアップロード（任意・複数可）",
+        "遯∝粋貂医∩Parquet繧偵い繝・・繝ｭ繝ｼ繝会ｼ井ｻｻ諢上・隍・焚蜿ｯ・・,
         type=["parquet"],
         key="parquet_uploader",
         accept_multiple_files=True,
@@ -400,9 +396,8 @@ def main():
         chunk_offset = 0
         if uploaded:
             file_kind, df_input, xls_for_copy, sheet_name, base_name = _load_input(uploaded)
-            # シート名選択（Excelのみ）
-            if file_kind == "excel" and xls_for_copy is not None:
-                sheet_name = st.selectbox("シート名を選択", options=xls_for_copy.sheet_names, index=0)
+            # 繧ｷ繝ｼ繝亥錐驕ｸ謚橸ｼ・xcel縺ｮ縺ｿ・・            if file_kind == "excel" and xls_for_copy is not None:
+                sheet_name = st.selectbox("繧ｷ繝ｼ繝亥錐繧帝∈謚・, options=xls_for_copy.sheet_names, index=0)
                 df_input = xls_for_copy.parse(sheet_name, dtype=str)
         elif df_parquet is not None:
             df_input = df_parquet
@@ -411,35 +406,35 @@ def main():
             sheet_name = "data"
             base_name = parquet_base_name or "parquet_input"
 
-        zip_cols = st.multiselect("郵便番号列を選択", options=df_input.columns.tolist())
-        addr_cols = st.multiselect("住所列を選択", options=df_input.columns.tolist())
-        geocode_enabled = st.checkbox("緯度経度を付与する", value=False)
-        cache_uploader = st.file_uploader("キャッシュParquetをアップロード（任意）", type=["parquet"])
+        zip_cols = st.multiselect("驛ｵ萓ｿ逡ｪ蜿ｷ蛻励ｒ驕ｸ謚・, options=df_input.columns.tolist())
+        addr_cols = st.multiselect("菴乗園蛻励ｒ驕ｸ謚・, options=df_input.columns.tolist())
+        geocode_enabled = st.checkbox("邱ｯ蠎ｦ邨悟ｺｦ繧剃ｻ倅ｸ弱☆繧・, value=False)
+        cache_uploader = st.file_uploader("繧ｭ繝｣繝・す繝･Parquet繧偵い繝・・繝ｭ繝ｼ繝会ｼ井ｻｻ諢擾ｼ・, type=["parquet"])
 
         uploaded_cache = None
         if cache_uploader:
             try:
                 cache_df = pd.read_parquet(io.BytesIO(cache_uploader.read()))
-                # 想定カラム: address, lat, lon, flag
+                # 諠ｳ螳壹き繝ｩ繝: address, lat, lon, flag
                 required_cols = {"address", "lat", "lon", "flag"}
                 if not required_cols.issubset(set(cache_df.columns)):
-                    raise ValueError("必要なカラム(address, lat, lon, flag)が見つかりません")
+                    raise ValueError("蠢・ｦ√↑繧ｫ繝ｩ繝(address, lat, lon, flag)縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ")
                 uploaded_cache = {
                     str(row["address"]): (row["lat"], row["lon"], row["flag"])
                     for _, row in cache_df.iterrows()
                     if pd.notna(row.get("address"))
                 }
             except Exception as e:
-                st.warning(f"キャッシュParquetの読込に失敗しました: {e}")
+                st.warning(f"繧ｭ繝｣繝・す繝･Parquet縺ｮ隱ｭ霎ｼ縺ｫ螟ｱ謨励＠縺ｾ縺励◆: {e}")
 
-        # Parquetがある場合は住所列キーでParquetを優先マージ
+        # Parquet縺後≠繧句ｴ蜷医・菴乗園蛻励く繝ｼ縺ｧParquet繧貞━蜈医・繝ｼ繧ｸ
         if df_parquet is not None and addr_cols:
             missing_base = [c for c in addr_cols if c not in df_input.columns]
             missing_parquet = [c for c in addr_cols if c not in df_parquet.columns]
             if missing_base or missing_parquet:
                 st.warning(
-                    f"Parquet優先マージをスキップしました。欠損列: "
-                    f"ベース={missing_base or 'なし'}, Parquet={missing_parquet or 'なし'}"
+                    f"Parquet蜆ｪ蜈医・繝ｼ繧ｸ繧偵せ繧ｭ繝・・縺励∪縺励◆縲よｬ謳榊・: "
+                    f"繝吶・繧ｹ={missing_base or '縺ｪ縺・}, Parquet={missing_parquet or '縺ｪ縺・}"
                 )
             else:
                 def _build_key(df):
@@ -461,12 +456,11 @@ def main():
                 base_df["_merge_key"] = _build_key(base_df)
                 pq_df["_merge_key"] = _build_key(pq_df)
 
-                # 空キー除外＆Parquet側は重複キーは先頭だけを残す
+                # 遨ｺ繧ｭ繝ｼ髯､螟厄ｼ・arquet蛛ｴ縺ｯ驥崎､・く繝ｼ縺ｯ蜈磯ｭ縺縺代ｒ谿九☆
                 pq_df = pq_df[pq_df["_merge_key"] != ""]
                 pq_df = pq_df.drop_duplicates("_merge_key", keep="first")
 
-                # Parquet側にある列をベースにも追加しておく（突合済み列を落とさないため）
-                for col in pq_df.columns:
+                # Parquet蛛ｴ縺ｫ縺ゅｋ蛻励ｒ繝吶・繧ｹ縺ｫ繧りｿｽ蜉縺励※縺翫￥・育ｪ∝粋貂医∩蛻励ｒ關ｽ縺ｨ縺輔↑縺・◆繧・ｼ・                for col in pq_df.columns:
                     if col not in base_df.columns:
                         base_df[col] = None
 
@@ -479,23 +473,22 @@ def main():
                 base_only = base_keys - pq_keys
                 pq_only = pq_keys - base_keys
 
-                # Parquetのキーが一致するベース行を上書き（行は増やさない）
-                aligned = pq_df.reindex(base_df.index)
+                # Parquet縺ｮ繧ｭ繝ｼ縺御ｸ閾ｴ縺吶ｋ繝吶・繧ｹ陦後ｒ荳頑嶌縺搾ｼ郁｡後・蠅励ｄ縺輔↑縺・ｼ・                aligned = pq_df.reindex(base_df.index)
                 base_df.update(aligned)
 
                 base_df["__is_parquet"] = base_df.index.isin(common_keys)
                 df_input = base_df.reset_index().rename(columns={"index": "__merge_key"})
 
                 st.info(
-                    f"キー件数 ベース={len(base_keys)} / Parquet={len(pq_keys)} / 共通={len(common_keys)} / "
-                    f"ベースのみ={len(base_only)} / Parquetのみ={len(pq_only)}"
+                    f"繧ｭ繝ｼ莉ｶ謨ｰ 繝吶・繧ｹ={len(base_keys)} / Parquet={len(pq_keys)} / 蜈ｱ騾・{len(common_keys)} / "
+                    f"繝吶・繧ｹ縺ｮ縺ｿ={len(base_only)} / Parquet縺ｮ縺ｿ={len(pq_only)}"
                 )
 
-                # Parquetで上書きした行は処理スキップ、未マッチのみ突合
+                # Parquet縺ｧ荳頑嶌縺阪＠縺溯｡後・蜃ｦ逅・せ繧ｭ繝・・縲∵悴繝槭ャ繝√・縺ｿ遯∝粋
                 process_mask = ~df_input["__is_parquet"]
                 chunk_offset = int(df_input["__is_parquet"].sum())
 
-        run_clicked = st.button("実行 / 再実行", type="primary")
+        run_clicked = st.button("螳溯｡・/ 蜀榊ｮ溯｡・, type="primary")
 
         if run_clicked:
             log_box = st.empty()
@@ -521,39 +514,61 @@ def main():
                 "data": buf.getvalue(),
                 "name": fname,
             }
-            # cache_path は内部利用のみ。UIには出さない。
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "rb") as f:
+                        st.session_state["cache_file"] = {
+                            "data": f.read(),
+                            "name": os.path.basename(cache_path),
+                        }
+                except Exception:
+                    pass
 
-        if st.session_state.get("addr_chunk_downloads"):
-            st.subheader("住所突合チャンクのダウンロード")
-            for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
-                st.download_button(
-                    label=item["label"],
-                    data=item["data"],
-                    file_name=item["name"],
+        # 繝励Ο繧ｰ繝ｬ繧ｹ繝舌・縺ｮ荳九↓縺ｾ縺ｨ繧√※驟咲ｽｮ
+        download_section = st.container()
+        with download_section:
+            if st.session_state.get("addr_chunk_downloads"):
+                st.subheader("菴乗園遯∝粋繝√Ε繝ｳ繧ｯ縺ｮ繝繧ｦ繝ｳ繝ｭ繝ｼ繝・)
+                for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
+                    st.download_button(
+                        label=item["label"],
+                        data=item["data"],
+                        file_name=item["name"],
+                        mime="application/octet-stream",
+                        key=f"addr_chunk_{i}",
+                    )
+
+            if st.session_state.get("geo_chunk_downloads"):
+                st.subheader("繧ｸ繧ｪ繧ｳ繝ｼ繝・ぅ繝ｳ繧ｰ繝√Ε繝ｳ繧ｯ縺ｮ繝繧ｦ繝ｳ繝ｭ繝ｼ繝・)
+                for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
+                    st.download_button(
+                        label=item["label"],
+                        data=item["data"],
+                        file_name=item["name"],
+                        mime="application/octet-stream",
+                        key=f"geo_chunk_{i}",
+                    )
+
+            if st.session_state.get("result_file"):
+                result_placeholder.download_button(
+                    label="邨先棡繝・・繧ｿ繧偵ム繧ｦ繝ｳ繝ｭ繝ｼ繝・,
+                    data=st.session_state["result_file"]["data"],
+                    file_name=st.session_state["result_file"]["name"],
                     mime="application/octet-stream",
-                    key=f"addr_chunk_{i}",
+                    key="result_download",
                 )
 
-        if st.session_state.get("geo_chunk_downloads"):
-            st.subheader("ジオコーディングチャンクのダウンロード")
-            for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
-                st.download_button(
-                    label=item["label"],
-                    data=item["data"],
-                    file_name=item["name"],
+            if st.session_state.get("cache_file"):
+                download_cache_placeholder.download_button(
+                    label="繧ｭ繝｣繝・す繝･Parquet繧偵ム繧ｦ繝ｳ繝ｭ繝ｼ繝会ｼ域ｬ｡蝗槫・蛻ｩ逕ｨ逕ｨ・・,
+                    data=st.session_state["cache_file"]["data"],
+                    file_name=st.session_state["cache_file"]["name"],
                     mime="application/octet-stream",
-                    key=f"geo_chunk_{i}",
+                    key="cache_download",
                 )
-
-        # 結果データを住所/ジオコードチャンクの下に配置
-        if st.session_state.get("result_file"):
-            result_placeholder.download_button(
-                label="結果データをダウンロード",
-                data=st.session_state["result_file"]["data"],
-                file_name=st.session_state["result_file"]["name"],
-                mime="application/octet-stream",
-                key="result_download",
-            )
 
 if __name__ == "__main__":
     main()
+
+
+
