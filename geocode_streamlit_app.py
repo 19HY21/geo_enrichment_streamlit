@@ -6,7 +6,6 @@ Geo Enrichment Tool (Streamlit)
 - Streamlit Cloud でも動作するよう軽量構成
 """
 
-import base64
 import io
 import os
 import sys
@@ -174,12 +173,13 @@ def _run_pipeline(
                     buf = io.BytesIO()
                     chunk.to_parquet(buf, index=False)
                     buf.seek(0)
-                    b64 = base64.b64encode(buf.getvalue()).decode()
-                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
-                    st.session_state["addr_chunk_downloads"].append(href)
-                    # 実行中もダウンロードリンクを表示（クリックしても再実行されない）
-                    with live_download_section:
-                        st.markdown(href, unsafe_allow_html=True)
+                    st.session_state["addr_chunk_downloads"].append(
+                        {
+                            "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                            "data": buf.getvalue(),
+                            "name": chunk_fname,
+                        }
+                    )
                 except Exception:
                     pass
                 processed = end
@@ -249,12 +249,13 @@ def _run_pipeline(
                 geo_bytes = io.BytesIO()
                 geo_df.to_parquet(geo_bytes, index=False)
                 geo_bytes.seek(0)
-                b64 = base64.b64encode(geo_bytes.getvalue()).decode()
-                href = f'<a href="data:application/octet-stream;base64,{b64}" download="{geo_chunk_fname}">ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
-                st.session_state["geo_chunk_downloads"].append(href)
-                # 実行中もダウンロードリンクを表示（クリックしても再実行されない）
-                with live_download_section:
-                    st.markdown(href, unsafe_allow_html=True)
+                st.session_state["geo_chunk_downloads"].append(
+                    {
+                        "label": f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                        "data": geo_bytes.getvalue(),
+                        "name": geo_chunk_fname,
+                    }
+                )
             except Exception:
                 pass
             overall_done = end
@@ -290,28 +291,34 @@ def _run_pipeline(
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar("out", 100, "完了")
 
-    # 進捗バー直下にダウンロードボタンを集約表示
+    # 進捗バー直下にダウンロードリンク/ボタンを集約表示
     with live_download_section:
         if st.session_state.get("addr_chunk_downloads"):
-            st.subheader("住所突合チャンクのダウンロード")
+            st.markdown("住所突合チャンクのダウンロード")
             for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
-                st.download_button(
-                    label=item["label"],
-                    data=item["data"],
-                    file_name=item["name"],
-                    mime="application/octet-stream",
-                    key=f"addr_chunk_{i}",
-                )
+                if isinstance(item, str):
+                    st.markdown(item, unsafe_allow_html=True)
+                else:
+                    st.download_button(
+                        label=item["label"],
+                        data=item["data"],
+                        file_name=item["name"],
+                        mime="application/octet-stream",
+                        key=f"addr_chunk_{i}",
+                    )
         if st.session_state.get("geo_chunk_downloads"):
-            st.subheader("ジオコーディングチャンクのダウンロード")
+            st.markdown("ジオコーディングチャンクのダウンロード")
             for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
-                st.download_button(
-                    label=item["label"],
-                    data=item["data"],
-                    file_name=item["name"],
-                    mime="application/octet-stream",
-                    key=f"geo_chunk_{i}",
-                )
+                if isinstance(item, str):
+                    st.markdown(item, unsafe_allow_html=True)
+                else:
+                    st.download_button(
+                        label=item["label"],
+                        data=item["data"],
+                        file_name=item["name"],
+                        mime="application/octet-stream",
+                        key=f"geo_chunk_{i}",
+                    )
         if st.session_state.get("result_file"):
             st.download_button(
                 label="結果データをダウンロード",
