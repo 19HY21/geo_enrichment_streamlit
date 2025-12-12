@@ -176,16 +176,9 @@ def _run_pipeline(
                     buf = io.BytesIO()
                     chunk.to_parquet(buf, index=False)
                     buf.seek(0)
-                    st.session_state["addr_chunk_downloads"].append(
-                        {
-                            "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                            "data": buf.getvalue(),
-                            "name": chunk_fname,
-                        }
-                    )
-                    # 実行中から表示（クリックで処理が止まらないよう data URI 形式）
                     b64 = base64.b64encode(buf.getvalue()).decode()
-                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
+                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">?????? {start+1+chunk_offset}-{end+chunk_offset} ??????? (Parquet)</a>'
+                    st.session_state["addr_chunk_downloads"].append(href)
                     st.markdown(href, unsafe_allow_html=True)
                 except Exception:
                     pass
@@ -256,16 +249,9 @@ def _run_pipeline(
                 geo_bytes = io.BytesIO()
                 geo_df.to_parquet(geo_bytes, index=False)
                 geo_bytes.seek(0)
-                st.session_state["geo_chunk_downloads"].append(
-                    {
-                        "label": f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                        "data": geo_bytes.getvalue(),
-                        "name": geo_chunk_fname,
-                    }
-                )
-                # 実行中から表示（クリックで処理が止まらないよう data URI 形式）
                 b64 = base64.b64encode(geo_bytes.getvalue()).decode()
                 href = f'<a href="data:application/octet-stream;base64,{b64}" download="{geo_chunk_fname}">ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
+                st.session_state["geo_chunk_downloads"].append(href)
                 st.markdown(href, unsafe_allow_html=True)
             except Exception:
                 pass
@@ -306,14 +292,12 @@ def _run_pipeline(
     with live_download_section:
         if st.session_state.get("addr_chunk_downloads"):
             st.markdown("住所突合チャンクのダウンロード")
-            for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
-                # URL版のみ表示
-                st.markdown(item if isinstance(item, str) else item.get("label", ""), unsafe_allow_html=True)
+            for item in st.session_state["addr_chunk_downloads"]:
+                st.markdown(item, unsafe_allow_html=True)
         if st.session_state.get("geo_chunk_downloads"):
             st.markdown("ジオコーディングチャンクのダウンロード")
-            for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
-                # URL版のみ表示
-                st.markdown(item if isinstance(item, str) else item.get("label", ""), unsafe_allow_html=True)
+            for item in st.session_state["geo_chunk_downloads"]:
+                st.markdown(item, unsafe_allow_html=True)
         if st.session_state.get("result_file"):
             st.download_button(
                 label="結果データをダウンロード",
@@ -555,6 +539,33 @@ def main():
                         "data": f.read(),
                         "name": os.path.basename(cache_path),
                     }
+
+    # 進捗エリア下に常時ダウンロード表示（チャンクはリンクのみ）
+    with download_section:
+        if st.session_state.get("addr_chunk_downloads"):
+            st.markdown("住所突合チャンクのダウンロード（処理中も利用可）")
+            for item in st.session_state["addr_chunk_downloads"]:
+                st.markdown(item, unsafe_allow_html=True)
+        if st.session_state.get("geo_chunk_downloads"):
+            st.markdown("ジオコーディングチャンクのダウンロード（処理中も利用可）")
+            for item in st.session_state["geo_chunk_downloads"]:
+                st.markdown(item, unsafe_allow_html=True)
+        if st.session_state.get("result_file"):
+            result_placeholder.download_button(
+                label="結果データをダウンロード",
+                data=st.session_state["result_file"]["data"],
+                file_name=st.session_state["result_file"]["name"],
+                mime="application/octet-stream",
+                key="result_download_persistent",
+            )
+        if st.session_state.get("cache_file"):
+            st.download_button(
+                label="キャッシュParquetをダウンロード（次回再利用用）",
+                data=st.session_state["cache_file"]["data"],
+                file_name=st.session_state["cache_file"]["name"],
+                mime="application/octet-stream",
+                key="cache_download_persistent",
+            )
 
 if __name__ == "__main__":
     main()
