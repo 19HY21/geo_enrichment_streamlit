@@ -6,7 +6,6 @@ Geo Enrichment Tool (Streamlit)
 """
 
 import io
-import json
 import os
 import sys
 from datetime import datetime
@@ -24,7 +23,6 @@ from geo_logic import core as logic  # noqa: E402
 # マスタパスをリポジトリ内 data に固定したい場合はコメントアウトを外してください
 # logic.MASTER_PATH = os.path.join(BASE_DIR, "data", "zipcode_localgoverment_mst.xlsx")
 
-# 利用関数
 CACHE_DIR = logic.CACHE_DIR
 OUTPUT_SUFFIX = logic.OUTPUT_SUFFIX
 BATCH_SIZE_DEFAULT = 5000
@@ -53,8 +51,6 @@ def _run_pipeline(
     addr_cols: List[str],
     xls_for_copy: pd.ExcelFile,
     log_box,
-    addr_dl_box,
-    geo_dl_box,
     base_name: str,
     batch_size: int,
     geocode_enabled: bool = True,
@@ -62,14 +58,15 @@ def _run_pipeline(
     process_mask: pd.Series | None = None,
     chunk_offset: int = 0,
 ):
+    # ダウンロードUIを進捗直下に配置
+    download_section = st.container()
+
     st.session_state["addr_chunk_downloads"] = []
     st.session_state["geo_chunk_downloads"] = []
     st.session_state["logs"] = []
     progress = st.progress(0)
     status = st.empty()
-    download_section = st.container()
 
-    # フェーズの重み
     weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
     enabled_phases = ["zip"]
     if addr_cols:
@@ -100,19 +97,19 @@ def _run_pipeline(
     master_df = read_master()
     _log(log_box, "マスタ読込完了")
     total_rows_all = len(df_input)
-    df_proc_in = df_input.copy() if process_mask is None else df_input.loc[process_mask].copy()
+    # process_mask は住所突合をスキップする行のマークとしてのみ利用し、全体処理は全行を対象とする
+    df_proc_in = df_input.copy()
     _log(
         log_box,
-        f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)} /",
+        f"入力件数: {total_rows_all} / 対象件数(住所突合対象): "
+        f"{len(df_input) if process_mask is None else process_mask.sum()} / 郵便番号列: {zip_cols} / 住所列: {addr_cols}",
     )
 
-    # 必要列のみ抽出
     cols_needed = list(dict.fromkeys(zip_cols + addr_cols))
     df_work = df_proc_in[cols_needed].copy() if cols_needed else df_proc_in.copy()
     used_zip_codes = set()
     used_master_idx = set()
 
-    # 全行がParquet由来などで処理対象が無い場合はそのまま出力を返す
     if df_work.empty:
         _log(log_box, "処理対象の行がありません（全件Parquet由来など）。")
         out_base = base_name or "output"
@@ -133,69 +130,67 @@ def _run_pipeline(
 
     # 郵便番号突合
     if zip_cols:
-        _log(log_box, "郵便番号突合開始 /")
+        _log(log_box, f"郵便番号突合開始: {zip_cols}")
 
         def zip_prog(done, total, detail):
             pct = done / max(total, 1) * 100
-            prog_bar("zip", pct, f"[郵便番号] {detail}")
+            prog_bar("zip", pct, f"[zip] {detail}")
 
         df_work = attach_master_by_zip(
             df_work, master_df, zip_cols, progress=zip_prog, used_zip_codes=used_zip_codes
         )
-        prog_bar("zip", 100, "[郵便番号] 完了")
-        _log(log_box, f"郵便番号突合完了 使用郵便番号: {len(used_zip_codes)}件 /")
+        prog_bar("zip", 100, "[zip] 完了")
+        _log(log_box, f"郵便番号突合完了 使用郵便番号: {len(used_zip_codes)}件")
 
-    # 住所突合（チャンク＋オンディスク保存）
+    # 住所突合（チャンク＋オンディスク保存）: 突合済みParquetと一致した行はスキップ、未一致のみ処理
     if addr_cols:
-        _log(log_box, "住所突合開始 /")
-        prog_bar("addr", 0, "[addr] 処理開始")
-        chunk_size = 1000
-        addr_chunks = []
-        total_rows = len(df_work)
-        processed = 0
-        chunk_dir = os.path.join(CACHE_DIR, "addr_chunks")
-        os.makedirs(chunk_dir, exist_ok=True)
+        addr_mask = process_mask
+        df_addr_target = df_work if addr_mask is None else df_work.loc[addr_mask].copy()
+        total_rows = len(df_addr_target)
+        _log(log_box, f"住所突合開始: {addr_cols} / 対象件数: {total_rows}")
+        if total_rows > 0:
+            chunk_size = 1000
+            addr_chunks = []
+            processed = 0
+            chunk_dir = os.path.join(CACHE_DIR, "addr_chunks")
+            os.makedirs(chunk_dir, exist_ok=True)
 
-        for start in range(0, total_rows, chunk_size):
-            end = min(start + chunk_size, total_rows)
-            chunk = df_work.iloc[start:end].copy()
-            chunk = attach_master_by_address(
-                chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
-            )
-            addr_chunks.append(chunk)
-            chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
-            chunk_path = os.path.join(chunk_dir, chunk_fname)
-            chunk.to_parquet(chunk_path, index=False)
-            try:
-                buf = io.BytesIO()
-                chunk.to_parquet(buf, index=False)
-                buf.seek(0)
-                st.session_state["addr_chunk_downloads"].append(
-                    {
-                        "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                        "data": buf.getvalue(),
-                        "name": chunk_fname,
-                    }
+            for start in range(0, total_rows, chunk_size):
+                end = min(start + chunk_size, total_rows)
+                chunk = df_addr_target.iloc[start:end].copy()
+                chunk = attach_master_by_address(
+                    chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
                 )
-                addr_dl_box.download_button(
-                    label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                    data=buf.getvalue(),
-                    file_name=chunk_fname,
-                    mime="application/octet-stream",
-                    key=f"addr_chunk_live_{start}_{end}_{chunk_offset}",
-                )
-            except Exception:
-                pass
-            processed = end
-            pct = processed / max(total_rows, 1) * 100
-            prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
-            _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
-            _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
-            _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
+                addr_chunks.append(chunk)
+                chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
+                chunk_path = os.path.join(chunk_dir, chunk_fname)
+                chunk.to_parquet(chunk_path, index=False)
+                try:
+                    buf = io.BytesIO()
+                    chunk.to_parquet(buf, index=False)
+                    buf.seek(0)
+                    st.session_state["addr_chunk_downloads"].append(
+                        {
+                            "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                            "data": buf.getvalue(),
+                            "name": chunk_fname,
+                        }
+                    )
+                except Exception:
+                    pass
+                processed = end
+                pct = processed / max(total_rows, 1) * 100
+                prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
+                _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
+                _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
 
-        df_work = pd.concat(addr_chunks).sort_index()
-        prog_bar("addr", 100, "[addr] 完了")
-        _log(log_box, f"住所突合完了 使用行: {len(used_master_idx)}件")
+            df_addr_out = pd.concat(addr_chunks).sort_index()
+            # 処理した行だけ反映
+            df_work.loc[df_addr_out.index, df_addr_out.columns] = df_addr_out
+            prog_bar("addr", 100, "[addr] 完了")
+            _log(log_box, f"住所突合完了 使用行: {len(used_master_idx)}件")
+        else:
+            _log(log_box, "住所突合スキップ（対象行なし）")
 
     # ジオコーディング
     os.makedirs(CACHE_DIR, exist_ok=True)
@@ -239,7 +234,6 @@ def _run_pipeline(
             )
             geo_results.update(chunk_results)
             save_cache(local_cache_path, cache)
-            # ジオコード結果チャンクをParquetでダウンロード可能にする
             try:
                 geo_df = pd.DataFrame(
                     [
@@ -258,13 +252,6 @@ def _run_pipeline(
                         "name": geo_chunk_fname,
                     }
                 )
-                geo_dl_box.download_button(
-                    label=f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                    data=geo_bytes.getvalue(),
-                    file_name=geo_chunk_fname,
-                    mime="application/octet-stream",
-                    key=f"geo_chunk_live_{start}_{end}_{chunk_offset}",
-                )
             except Exception:
                 pass
             overall_done = end
@@ -277,7 +264,6 @@ def _run_pipeline(
     if geocode_enabled and addr_cols:
         save_cache(local_cache_path, cache)
 
-    # 出力生成（元データに突合結果をマージ）
     out_base = base_name or "output"
     df_out_merge = df_input.copy()
     for col in df_work.columns:
@@ -300,7 +286,8 @@ def _run_pipeline(
     prog_bar("out", 50, "[out] 生成中")
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar("out", 100, "完了")
-    # ダウンロードボタンをプログレス直下で描画
+
+    # プログレス直下にダウンロードボタンを常時配置
     with download_section:
         if st.session_state.get("addr_chunk_downloads"):
             st.subheader("住所突合チャンクのダウンロード")
@@ -337,6 +324,7 @@ def _run_pipeline(
                 mime="application/octet-stream",
                 key="cache_download",
             )
+
     return buf, fname, df_out_merge, local_cache_path
 
 
@@ -409,16 +397,13 @@ def main():
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
     parquet_uploader = st.file_uploader(
-        "突合済み住所Parquetをアップロード（任意・複数可）",
+        "突合済みParquetをアップロード（任意・複数可）",
         type=["parquet"],
         key="parquet_uploader",
         accept_multiple_files=True,
     )
     result_placeholder = st.empty()
     download_cache_placeholder = st.empty()
-
-    addr_dl_box = st.container()
-    geo_dl_box = st.container()
 
     st.session_state.setdefault("addr_chunk_downloads", [])
     st.session_state.setdefault("geo_chunk_downloads", [])
@@ -435,12 +420,10 @@ def main():
                 pq_frames.append(pd.read_parquet(io.BytesIO(f.read())))
             df_parquet = pd.concat(pq_frames, ignore_index=True) if pq_frames else None
             parquet_base_name = os.path.splitext(parquet_files[0].name)[0]
-        parquet_keys_set = set()
         process_mask = None
         chunk_offset = 0
         if uploaded:
             file_kind, df_input, xls_for_copy, sheet_name, base_name = _load_input(uploaded)
-            # シート名選択（Excelのみ）
             if file_kind == "excel" and xls_for_copy is not None:
                 sheet_name = st.selectbox("シート名を選択", options=xls_for_copy.sheet_names, index=0)
                 df_input = xls_for_copy.parse(sheet_name, dtype=str)
@@ -476,7 +459,7 @@ def main():
             except Exception as e:
                 st.warning(f"キャッシュParquetの読み込みに失敗しました: {e}")
 
-        # Parquetがある場合は住所列キーでParquetを優先マージ
+        # Parquetがある場合は住所列キーでParquetを優先マージ（未一致のみ処理）
         if df_parquet is not None and addr_cols:
             missing_base = [c for c in addr_cols if c not in df_input.columns]
             missing_parquet = [c for c in addr_cols if c not in df_parquet.columns]
@@ -505,11 +488,9 @@ def main():
                 base_df["_merge_key"] = _build_key(base_df)
                 pq_df["_merge_key"] = _build_key(pq_df)
 
-                # 空キー除外＆Parquet側は重複キーは先頭だけを残す
                 pq_df = pq_df[pq_df["_merge_key"] != ""]
                 pq_df = pq_df.drop_duplicates("_merge_key", keep="first")
 
-                # Parquet側にある列をベースにも追加しておく（突合済み列を落とさないため）
                 for col in pq_df.columns:
                     if col not in base_df.columns:
                         base_df[col] = None
@@ -523,7 +504,6 @@ def main():
                 base_only = base_keys - pq_keys
                 pq_only = pq_keys - base_keys
 
-                # Parquetのキーが一致するベース行を上書き（行は増やさない）
                 aligned = pq_df.reindex(base_df.index)
                 base_df.update(aligned)
 
@@ -535,9 +515,8 @@ def main():
                     f"ベースのみ={len(base_only)} / Parquetのみ={len(pq_only)}"
                 )
 
-                # Parquet一致行も含めて再処理するためマスクはかけない
-                process_mask = None
-                chunk_offset = 0
+                process_mask = ~df_input["__is_parquet"]
+                chunk_offset = int(df_input["__is_parquet"].sum())
 
         run_clicked = st.button("実行 / 再実行", type="primary")
 
@@ -551,8 +530,6 @@ def main():
                 addr_cols=addr_cols,
                 xls_for_copy=xls_for_copy,
                 log_box=log_box,
-                addr_dl_box=addr_dl_box,
-                geo_dl_box=geo_dl_box,
                 base_name=base_name,
                 batch_size=BATCH_SIZE_DEFAULT,
                 geocode_enabled=geocode_enabled,
@@ -572,48 +549,23 @@ def main():
                         "name": os.path.basename(cache_path),
                     }
 
-        # プログレスバーの下にまとめて配置
-        download_section = st.container()
-        with download_section:
-            if st.session_state.get("addr_chunk_downloads"):
-                st.subheader("住所突合Parquetのダウンロード（次回再利用用）")
-                for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
-                    st.download_button(
-                        label=item["label"],
-                        data=item["data"],
-                        file_name=item["name"],
-                        mime="application/octet-stream",
-                        key=f"addr_chunk_{i}",
-                    )
-
-            if st.session_state.get("geo_chunk_downloads"):
-                st.subheader("ジオコーディンParquetをダウンロード（次回再利用用）")
-                for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
-                    st.download_button(
-                        label=item["label"],
-                        data=item["data"],
-                        file_name=item["name"],
-                        mime="application/octet-stream",
-                        key=f"geo_chunk_{i}",
-                    )
-
-            if st.session_state.get("result_file"):
-                result_placeholder.download_button(
-                    label="結果データをダウンロード",
-                    data=st.session_state["result_file"]["data"],
-                    file_name=st.session_state["result_file"]["name"],
-                    mime="application/octet-stream",
-                    key="result_download",
-                )
-
-            if st.session_state.get("cache_file"):
-                download_cache_placeholder.download_button(
-                    label="キャッシュParquetをダウンロード（次回再利用用）",
-                    data=st.session_state["cache_file"]["data"],
-                    file_name=st.session_state["cache_file"]["name"],
-                    mime="application/octet-stream",
-                    key="cache_download",
-                )
+    # 進捗下に結果ダウンロード（実行後）
+    if st.session_state.get("result_file"):
+        result_placeholder.download_button(
+            label="結果データをダウンロード",
+            data=st.session_state["result_file"]["data"],
+            file_name=st.session_state["result_file"]["name"],
+            mime="application/octet-stream",
+            key="result_download_footer",
+        )
+    if st.session_state.get("cache_file"):
+        download_cache_placeholder.download_button(
+            label="キャッシュParquetをダウンロード（次回再利用用）",
+            data=st.session_state["cache_file"]["data"],
+            file_name=st.session_state["cache_file"]["name"],
+            mime="application/octet-stream",
+            key="cache_download_footer",
+        )
 
 
 if __name__ == "__main__":
