@@ -25,15 +25,15 @@ from geo_logic import core as logic  # noqa: E402
 
 CACHE_DIR = logic.CACHE_DIR
 OUTPUT_SUFFIX = logic.OUTPUT_SUFFIX
-BATCH_SIZE_DEFAULT = 5000
-attach_master_by_address = logic.attach_master_by_address
-attach_master_by_zip = logic.attach_master_by_zip
-geocode_addresses = logic.geocode_addresses
-load_cache = logic.load_cache
-read_master = logic.read_master
-save_cache = logic.save_cache
-add_geocode_columns = logic.add_geocode_columns
-normalize_address = logic.normalize_address
+BATCH_SIZE_DEFAULT = 1_000 # ジオコーディング一括処理サイズ（住所数）
+attach_master_by_address = logic.attach_master_by_address # 住所突合
+attach_master_by_zip = logic.attach_master_by_zip # 郵便番号突合
+geocode_addresses = logic.geocode_addresses # ジオコーディング
+load_cache = logic.load_cache # キャッシュ読込
+read_master = logic.read_master # マスタ読込
+save_cache = logic.save_cache # キャッシュ保存
+add_geocode_columns = logic.add_geocode_columns # 緯度経度列付与
+normalize_address = logic.normalize_address # 住所正規化
 
 
 def _log(log_box, msg: str):
@@ -53,6 +53,7 @@ def _run_pipeline(
     addr_cols: List[str],
     xls_for_copy: pd.ExcelFile,
     log_box,
+    download_section,
     base_name: str,
     batch_size: int,
     geocode_enabled: bool = True,
@@ -170,15 +171,24 @@ def _run_pipeline(
                     buf = io.BytesIO()
                     chunk.to_parquet(buf, index=False)
                     buf.seek(0)
-                    st.session_state["addr_chunk_downloads"].append(
-                        {
-                            "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                            "data": buf.getvalue(),
-                            "name": chunk_fname,
-                        }
+                st.session_state["addr_chunk_downloads"].append(
+                    {
+                        "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                        "data": buf.getvalue(),
+                        "name": chunk_fname,
+                    }
+                )
+                # 実行中もダウンロードを表示
+                with download_section:
+                    st.download_button(
+                        label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                        data=buf.getvalue(),
+                        file_name=chunk_fname,
+                        mime="application/octet-stream",
+                        key=f"addr_chunk_live_{start}_{end}_{chunk_offset}",
                     )
-                except Exception:
-                    pass
+            except Exception:
+                pass
                 processed = end
                 pct = processed / max(total_rows, 1) * 100
                 prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
@@ -253,6 +263,15 @@ def _run_pipeline(
                         "name": geo_chunk_fname,
                     }
                 )
+                # 実行中もダウンロードを表示
+                with download_section:
+                    st.download_button(
+                        label=f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
+                        data=geo_bytes.getvalue(),
+                        file_name=geo_chunk_fname,
+                        mime="application/octet-stream",
+                        key=f"geo_chunk_live_{start}_{end}_{chunk_offset}",
+                    )
             except Exception:
                 pass
             overall_done = end
@@ -493,6 +512,7 @@ def main():
                 addr_cols=addr_cols,
                 xls_for_copy=xls_for_copy,
                 log_box=log_box,
+                download_section=download_section,
                 base_name=base_name,
                 batch_size=BATCH_SIZE_DEFAULT,
                 geocode_enabled=geocode_enabled,
