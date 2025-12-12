@@ -6,6 +6,7 @@ Geo Enrichment Tool (Streamlit)
 - Streamlit Cloud でも動作するよう軽量構成
 """
 
+import base64
 import io
 import os
 import sys
@@ -173,13 +174,12 @@ def _run_pipeline(
                     buf = io.BytesIO()
                     chunk.to_parquet(buf, index=False)
                     buf.seek(0)
-                    st.session_state["addr_chunk_downloads"].append(
-                        {
-                            "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                            "data": buf.getvalue(),
-                            "name": chunk_fname,
-                        }
-                    )
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
+                    st.session_state["addr_chunk_downloads"].append(href)
+                    # 実行中もダウンロードリンクを表示（クリックしても再実行されない）
+                    with live_download_section:
+                        st.markdown(href, unsafe_allow_html=True)
                 except Exception:
                     pass
                 processed = end
@@ -249,13 +249,12 @@ def _run_pipeline(
                 geo_bytes = io.BytesIO()
                 geo_df.to_parquet(geo_bytes, index=False)
                 geo_bytes.seek(0)
-                st.session_state["geo_chunk_downloads"].append(
-                    {
-                        "label": f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                        "data": geo_bytes.getvalue(),
-                        "name": geo_chunk_fname,
-                    }
-                )
+                b64 = base64.b64encode(geo_bytes.getvalue()).decode()
+                href = f'<a href="data:application/octet-stream;base64,{b64}" download="{geo_chunk_fname}">ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
+                st.session_state["geo_chunk_downloads"].append(href)
+                # 実行中もダウンロードリンクを表示（クリックしても再実行されない）
+                with live_download_section:
+                    st.markdown(href, unsafe_allow_html=True)
             except Exception:
                 pass
             overall_done = end
