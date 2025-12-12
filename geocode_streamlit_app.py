@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """
+Created on Thu Jun  6 14:00:00 2024
 Geo Enrichment Tool (Streamlit)
 - geo_logic/core を利用し、ブラウザから郵便番号/住所突合とジオコーディングを実行
 - Streamlit Cloud でも動作するよう軽量構成
