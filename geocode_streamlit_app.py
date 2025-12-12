@@ -62,9 +62,9 @@ def _run_pipeline(
     chunk_offset: int = 0,
 ):
     # ダウンロードUIを進捗直下に配置
-    st.session_state["addr_chunk_downloads"] = []
-    st.session_state["geo_chunk_downloads"] = []
-    st.session_state["logs"] = []
+    st.session_state.setdefault("addr_chunk_downloads", [])
+    st.session_state.setdefault("geo_chunk_downloads", [])
+    st.session_state.setdefault("logs", [])
     progress = st.progress(0)
     status = st.empty()
     live_download_section = st.container()
@@ -179,15 +179,6 @@ def _run_pipeline(
                             "name": chunk_fname,
                         }
                     )
-                    # 実行中もダウンロードを表示（進捗バー直下）
-                    with live_download_section:
-                        st.download_button(
-                            label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                            data=buf.getvalue(),
-                            file_name=chunk_fname,
-                            mime="application/octet-stream",
-                            key=f"addr_chunk_live_{start}_{end}_{chunk_offset}",
-                        )
                 except Exception:
                     pass
                 processed = end
@@ -264,15 +255,6 @@ def _run_pipeline(
                         "name": geo_chunk_fname,
                     }
                 )
-                # 実行中もダウンロードを表示（進捗バー直下）
-                with live_download_section:
-                    st.download_button(
-                        label=f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
-                        data=geo_bytes.getvalue(),
-                        file_name=geo_chunk_fname,
-                        mime="application/octet-stream",
-                        key=f"geo_chunk_live_{start}_{end}_{chunk_offset}",
-                    )
             except Exception:
                 pass
             overall_done = end
