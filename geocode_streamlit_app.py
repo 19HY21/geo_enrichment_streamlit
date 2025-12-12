@@ -67,6 +67,7 @@ def _run_pipeline(
     st.session_state["logs"] = []
     progress = st.progress(0)
     status = st.empty()
+    live_download_section = st.container()
 
     weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
     enabled_phases = ["zip"]
@@ -164,13 +165,13 @@ def _run_pipeline(
                     chunk, master_df, addr_cols, progress=None, used_master_idx=used_master_idx
                 )
                 addr_chunks.append(chunk)
-                chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
-                chunk_path = os.path.join(chunk_dir, chunk_fname)
-                chunk.to_parquet(chunk_path, index=False)
-                try:
-                    buf = io.BytesIO()
-                    chunk.to_parquet(buf, index=False)
-                    buf.seek(0)
+            chunk_fname = f"{base_name or 'output'}_addr_chunk_{start+1+chunk_offset}_{end+chunk_offset}.parquet"
+            chunk_path = os.path.join(chunk_dir, chunk_fname)
+            chunk.to_parquet(chunk_path, index=False)
+            try:
+                buf = io.BytesIO()
+                chunk.to_parquet(buf, index=False)
+                buf.seek(0)
                 st.session_state["addr_chunk_downloads"].append(
                     {
                         "label": f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
@@ -178,8 +179,8 @@ def _run_pipeline(
                         "name": chunk_fname,
                     }
                 )
-                # 実行中もダウンロードを表示
-                with download_section:
+                # 実行中もダウンロードを表示（進捗バー直下）
+                with live_download_section:
                     st.download_button(
                         label=f"住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
                         data=buf.getvalue(),
@@ -189,9 +190,9 @@ def _run_pipeline(
                     )
             except Exception:
                 pass
-                processed = end
-                pct = processed / max(total_rows, 1) * 100
-                prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
+            processed = end
+            pct = processed / max(total_rows, 1) * 100
+            prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
                 _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
                 _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
 
@@ -263,8 +264,8 @@ def _run_pipeline(
                         "name": geo_chunk_fname,
                     }
                 )
-                # 実行中もダウンロードを表示
-                with download_section:
+                # 実行中もダウンロードを表示（進捗バー直下）
+                with live_download_section:
                     st.download_button(
                         label=f"ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)",
                         data=geo_bytes.getvalue(),
