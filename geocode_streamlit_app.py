@@ -67,6 +67,7 @@ def _run_pipeline(
     st.session_state["logs"] = []
     progress = st.progress(0)
     status = st.empty()
+    download_section = st.container()
 
     # フェーズの重み
     weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
@@ -102,7 +103,7 @@ def _run_pipeline(
     df_proc_in = df_input.copy() if process_mask is None else df_input.loc[process_mask].copy()
     _log(
         log_box,
-        f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)}",
+        f"入力件数: {total_rows_all} / 対象件数: {len(df_proc_in)} /",
     )
 
     # 必要列のみ抽出
@@ -132,7 +133,7 @@ def _run_pipeline(
 
     # 郵便番号突合
     if zip_cols:
-        _log(log_box, f"郵便番号突合開始: {zip_cols}")
+        _log(log_box, "郵便番号突合開始 /")
 
         def zip_prog(done, total, detail):
             pct = done / max(total, 1) * 100
@@ -142,11 +143,11 @@ def _run_pipeline(
             df_work, master_df, zip_cols, progress=zip_prog, used_zip_codes=used_zip_codes
         )
         prog_bar("zip", 100, "[郵便番号] 完了")
-        _log(log_box, f"郵便番号突合完了 使用郵便番号: {len(used_zip_codes)}件")
+        _log(log_box, f"郵便番号突合完了 使用郵便番号: {len(used_zip_codes)}件 /")
 
     # 住所突合（チャンク＋オンディスク保存）
     if addr_cols:
-        _log(log_box, f"住所突合開始: {addr_cols}")
+        _log(log_box, "住所突合開始 /")
         prog_bar("addr", 0, "[addr] 処理開始")
         chunk_size = 1000
         addr_chunks = []
@@ -189,6 +190,7 @@ def _run_pipeline(
             pct = processed / max(total_rows, 1) * 100
             prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
             _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
+            _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
             _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
 
         df_work = pd.concat(addr_chunks).sort_index()
@@ -298,6 +300,43 @@ def _run_pipeline(
     prog_bar("out", 50, "[out] 生成中")
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar("out", 100, "完了")
+    # ダウンロードボタンをプログレス直下で描画
+    with download_section:
+        if st.session_state.get("addr_chunk_downloads"):
+            st.subheader("住所突合チャンクのダウンロード")
+            for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
+                st.download_button(
+                    label=item["label"],
+                    data=item["data"],
+                    file_name=item["name"],
+                    mime="application/octet-stream",
+                    key=f"addr_chunk_{i}",
+                )
+        if st.session_state.get("geo_chunk_downloads"):
+            st.subheader("ジオコーディングチャンクのダウンロード")
+            for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
+                st.download_button(
+                    label=item["label"],
+                    data=item["data"],
+                    file_name=item["name"],
+                    mime="application/octet-stream",
+                    key=f"geo_chunk_{i}",
+                )
+        st.download_button(
+            label="結果データをダウンロード",
+            data=buf,
+            file_name=fname,
+            mime="application/octet-stream",
+            key="result_download",
+        )
+        if st.session_state.get("cache_file"):
+            st.download_button(
+                label="キャッシュParquetをダウンロード（次回再利用用）",
+                data=st.session_state["cache_file"]["data"],
+                file_name=st.session_state["cache_file"]["name"],
+                mime="application/octet-stream",
+                key="cache_download",
+            )
     return buf, fname, df_out_merge, local_cache_path
 
 
