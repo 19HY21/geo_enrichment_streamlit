@@ -25,10 +25,10 @@ CHUNK_SIZE = 100_000  # Nominatim負荷を抑える
 CHUNK_SLEEP_SEC = 7.0
 REQUEST_SLEEP_SEC = 0.2
 PROGRESS_UPDATE_SEC = 60
-CHECKPOINT_SAVE_EVERY = 10_000  # ジオコーディング時のキャッシュ保存間隔（ユニーク住所数ベース）
+CHECKPOINT_SAVE_EVERY = 3_000  # ジオコーディング時のキャッシュ保存間隔（ユニーク住所数ベース）
 CACHE_DIR = os.path.join(BASE_DIR, "cache")
 GLOBAL_CACHE_PATH = os.path.join(CACHE_DIR, "geocode_cache_global.json")
-BATCH_SIZE_DEFAULT = 5000
+BATCH_SIZE_DEFAULT = 3_000 # ジオコーディング一括処理サイズ（住所数）
 
 # 地方コード・地方名マッピング（都道府県コード頭2桁で判定）
 REGION_MAP = {

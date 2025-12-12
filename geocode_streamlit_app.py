@@ -59,8 +59,6 @@ def _run_pipeline(
     chunk_offset: int = 0,
 ):
     # ダウンロードUIを進捗直下に配置
-    download_section = st.container()
-
     st.session_state["addr_chunk_downloads"] = []
     st.session_state["geo_chunk_downloads"] = []
     st.session_state["logs"] = []
@@ -202,7 +200,7 @@ def _run_pipeline(
 
     geo_results = {}
     if addr_cols and geocode_enabled:
-        _log(log_box, "ジオコーディング開始（ユニーク住所ベース）")
+        _log(log_box, "ジオコーディング開始 /")
         prog_bar("geo", 0, "[geo] 処理開始")
         all_addrs = []
         for col in addr_cols:
@@ -287,44 +285,6 @@ def _run_pipeline(
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar("out", 100, "完了")
 
-    # プログレス直下にダウンロードボタンを常時配置
-    with download_section:
-        if st.session_state.get("addr_chunk_downloads"):
-            st.subheader("住所突合チャンクのダウンロード")
-            for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
-                st.download_button(
-                    label=item["label"],
-                    data=item["data"],
-                    file_name=item["name"],
-                    mime="application/octet-stream",
-                    key=f"addr_chunk_{i}",
-                )
-        if st.session_state.get("geo_chunk_downloads"):
-            st.subheader("ジオコーディングチャンクのダウンロード")
-            for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
-                st.download_button(
-                    label=item["label"],
-                    data=item["data"],
-                    file_name=item["name"],
-                    mime="application/octet-stream",
-                    key=f"geo_chunk_{i}",
-                )
-        st.download_button(
-            label="結果データをダウンロード",
-            data=buf,
-            file_name=fname,
-            mime="application/octet-stream",
-            key="result_download",
-        )
-        if st.session_state.get("cache_file"):
-            st.download_button(
-                label="キャッシュParquetをダウンロード（次回再利用用）",
-                data=st.session_state["cache_file"]["data"],
-                file_name=st.session_state["cache_file"]["name"],
-                mime="application/octet-stream",
-                key="cache_download",
-            )
-
     return buf, fname, df_out_merge, local_cache_path
 
 
@@ -403,7 +363,7 @@ def main():
         accept_multiple_files=True,
     )
     result_placeholder = st.empty()
-    download_cache_placeholder = st.empty()
+    download_section = st.container()
 
     st.session_state.setdefault("addr_chunk_downloads", [])
     st.session_state.setdefault("geo_chunk_downloads", [])
@@ -549,23 +509,44 @@ def main():
                         "name": os.path.basename(cache_path),
                     }
 
-    # 進捗下に結果ダウンロード（実行後）
-    if st.session_state.get("result_file"):
-        result_placeholder.download_button(
-            label="結果データをダウンロード",
-            data=st.session_state["result_file"]["data"],
-            file_name=st.session_state["result_file"]["name"],
-            mime="application/octet-stream",
-            key="result_download_footer",
-        )
-    if st.session_state.get("cache_file"):
-        download_cache_placeholder.download_button(
-            label="キャッシュParquetをダウンロード（次回再利用用）",
-            data=st.session_state["cache_file"]["data"],
-            file_name=st.session_state["cache_file"]["name"],
-            mime="application/octet-stream",
-            key="cache_download_footer",
-        )
+    # 進捗バーの下に常時ダウンロードを配置
+    with download_section:
+        if st.session_state.get("addr_chunk_downloads"):
+            st.subheader("住所突合チャンクのダウンロード")
+            for i, item in enumerate(st.session_state["addr_chunk_downloads"]):
+                st.download_button(
+                    label=item["label"],
+                    data=item["data"],
+                    file_name=item["name"],
+                    mime="application/octet-stream",
+                    key=f"addr_chunk_{i}",
+                )
+        if st.session_state.get("geo_chunk_downloads"):
+            st.subheader("ジオコーディングチャンクのダウンロード")
+            for i, item in enumerate(st.session_state["geo_chunk_downloads"]):
+                st.download_button(
+                    label=item["label"],
+                    data=item["data"],
+                    file_name=item["name"],
+                    mime="application/octet-stream",
+                    key=f"geo_chunk_{i}",
+                )
+        if st.session_state.get("result_file"):
+            result_placeholder.download_button(
+                label="結果データをダウンロード",
+                data=st.session_state["result_file"]["data"],
+                file_name=st.session_state["result_file"]["name"],
+                mime="application/octet-stream",
+                key="result_download",
+            )
+        if st.session_state.get("cache_file"):
+            st.download_button(
+                label="キャッシュParquetをダウンロード（次回再利用用）",
+                data=st.session_state["cache_file"]["data"],
+                file_name=st.session_state["cache_file"]["name"],
+                mime="application/octet-stream",
+                key="cache_download",
+            )
 
 
 if __name__ == "__main__":
