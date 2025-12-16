@@ -8,16 +8,23 @@ on:
 permissions:
   contents: write
 
+# 同時に走ったジョブが同じmainへpushして衝突するのを防ぐ
+concurrency:
+  group: japanpost-master-main
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -30,15 +37,44 @@ jobs:
         run: |
           python mst_logic/zip_mst_build.py
 
-      - name: Rebase onto origin/main
-        run: |
-          git config --global pull.rebase true
-          git pull --rebase origin main
-
-      - name: Commit updated master
+      - name: Configure git user
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit (only if changed)
+        id: commit
+        run: |
           git add mst/japanpost_zipcode_mst.xlsx
-          git commit -m "chore: update JapanPost master" || echo "No changes to commit"
-          git push origin HEAD:main
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update JapanPost master"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # push直前にrebaseし、競合(push rejected)時は数回だけリトライ
+      - name: Rebase & push (with retry)
+        if: steps.commit.outputs.changed == 'true'
+        run: |
+          set -e
+
+          for i in 1 2 3; do
+            echo "---- Attempt $i ----"
+            git fetch origin main
+            git rebase origin/main || { git rebase --abort; exit 1; }
+
+            if git push origin HEAD:main; then
+              echo "Push succeeded."
+              exit 0
+            fi
+
+            echo "Push rejected. Sleeping and retrying..."
+            sleep $((5 * i))
+          done
+
+          echo "Push failed after retries."
+          exit 1
