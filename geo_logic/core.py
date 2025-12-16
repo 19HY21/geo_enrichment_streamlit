@@ -19,7 +19,7 @@ import requests
 
 # 定数定義
 BASE_DIR = os.path.dirname(__file__)
-MASTER_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "zipcode_localgoverment_mst.xlsx"))
+MASTER_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "mst", "zipcode_localgoverment_mst.xlsx"))
 OUTPUT_SUFFIX = "_GSI" # 出力列接尾辞
 CHUNK_SIZE = 100_000  # Nominatim負荷を抑える
 CHUNK_SLEEP_SEC = 7.0 # チャンク間隔（秒）
