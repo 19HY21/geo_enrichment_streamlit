@@ -37,6 +37,7 @@ jobs:
         run: |
           python mst_logic/zip_mst_build.py
           python mst_logic/mic_localgov_build.py
+          python mst_logic/zipcode_localgov_build.py
 
       - name: Configure git user
         run: |
@@ -46,7 +47,7 @@ jobs:
       - name: Commit (only if changed)
         id: commit
         run: |
-          git add mst/japanpost_zipcode_mst.xlsx mst/mic_localgoverment_mst.xlsx
+          git add mst/japanpost_zipcode_mst.xlsx mst/mic_localgoverment_mst.xlsx mst/zipcode_localgoverment_mst.xlsx
 
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
