@@ -55,7 +55,6 @@ def _run_pipeline(
     addr_cols: List[str],
     xls_for_copy: pd.ExcelFile,
     log_box,
-    download_section,
     base_name: str,
     batch_size: int,
     geocode_enabled: bool = True,
@@ -297,22 +296,6 @@ def _run_pipeline(
             st.markdown("ジオコーディングチャンクのダウンロード")
             for item in st.session_state["geo_chunk_downloads"]:
                 st.markdown(item, unsafe_allow_html=True)
-        if st.session_state.get("result_file"):
-            st.download_button(
-                label="結果データをダウンロード",
-                data=st.session_state["result_file"]["data"],
-                file_name=st.session_state["result_file"]["name"],
-                mime="application/octet-stream",
-                key="result_download",
-            )
-        if st.session_state.get("cache_file"):
-            st.download_button(
-                label="キャッシュParquetをダウンロード（次回再利用用）",
-                data=st.session_state["cache_file"]["data"],
-                file_name=st.session_state["cache_file"]["name"],
-                mime="application/octet-stream",
-                key="cache_download",
-            )
 
     return buf, fname, df_out_merge, local_cache_path
 
@@ -391,8 +374,6 @@ def main():
         key="parquet_uploader",
         accept_multiple_files=True,
     )
-    result_placeholder = st.empty()
-    download_section = st.container()
 
     st.session_state.setdefault("addr_chunk_downloads", [])
     st.session_state.setdefault("geo_chunk_downloads", [])
@@ -519,7 +500,6 @@ def main():
                 addr_cols=addr_cols,
                 xls_for_copy=xls_for_copy,
                 log_box=log_box,
-                download_section=download_section,
                 base_name=base_name,
                 batch_size=BATCH_SIZE_DEFAULT,
                 geocode_enabled=geocode_enabled,
@@ -540,6 +520,7 @@ def main():
                     }
 
     # 進捗エリア下に常時ダウンロード表示（チャンクはリンクのみ）
+    download_section = st.container()
     with download_section:
         if st.session_state.get("addr_chunk_downloads"):
             st.markdown("住所突合チャンクのダウンロード（処理中も利用可）")
@@ -550,7 +531,7 @@ def main():
             for item in st.session_state["geo_chunk_downloads"]:
                 st.markdown(item, unsafe_allow_html=True)
         if st.session_state.get("result_file"):
-            result_placeholder.download_button(
+            st.download_button(
                 label="結果データをダウンロード",
                 data=st.session_state["result_file"]["data"],
                 file_name=st.session_state["result_file"]["name"],
