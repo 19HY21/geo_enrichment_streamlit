@@ -254,20 +254,17 @@ def _run_pipeline(
             overall_done = end
             _log(log_box, f"バッチ完了 cache_hit={cache_hit} 新規={new_count} 累計={overall_done}/{total_unique}")
 
-    df_work = add_geocode_columns(df_work, addr_cols, geo_results)
-    if not (addr_cols and geocode_enabled):
-        _log(log_box, "ジオコーディングはスキップ（住所未選択または緯度経度付与オフ）")
-
     if geocode_enabled and addr_cols:
+        df_work = add_geocode_columns(df_work, addr_cols, geo_results)
         save_cache(local_cache_path, cache)
+    else:
+        _log(log_box, "ジオコーディングはスキップ（住所未選択または緯度経度付与オフ）")
 
     out_base = base_name or "output"
     df_out_merge = df_input.copy()
     for col in df_work.columns:
         df_out_merge.loc[df_work.index, col] = df_work[col]
-    for helper_col in ["__merge_key", "__is_parquet"]:
-        if helper_col in df_out_merge.columns:
-            df_out_merge = df_out_merge.drop(columns=[helper_col])
+    df_out_merge = df_out_merge.drop(columns=["__merge_key", "__is_parquet"], errors="ignore")
 
     # 列順を「元データ → 郵便番号突合列 → 住所突合/ジオコード列」に揃える
     base_cols = [c for c in df_input.columns if c not in ["__merge_key", "__is_parquet"]]
@@ -280,6 +277,7 @@ def _run_pipeline(
         ordered.extend([c for c in df_out_merge.columns if c.startswith(prefix) and c not in ordered])
     remaining = [c for c in df_out_merge.columns if c not in ordered]
     df_out_merge = df_out_merge[ordered + remaining]
+    df_out_merge = df_out_merge.drop(columns=["__merge_key", "__is_parquet"], errors="ignore")
 
     df_input_clean = df_input.drop(columns=["__merge_key", "__is_parquet"], errors="ignore")
 
