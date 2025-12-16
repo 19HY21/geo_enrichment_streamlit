@@ -12,6 +12,7 @@ import math
 import os
 import re
 import time
+import unicodedata
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -79,9 +80,14 @@ def safe_strip(val: Optional[str]) -> str:
 
 def pad_zip(val: Optional[str]) -> str:
     v = safe_strip(val)
-    if v.isdigit():
-        return v.zfill(7)
-    return v
+    if not v:
+        return v
+    v_norm = unicodedata.normalize("NFKC", v)  # 全角数字/記号→半角（例: １２３－４５６７, 〒１２３４５６７）
+    v_clean = re.sub(r"\D", "", v_norm)  # 非数字を除去（ハイフン各種, 〒, 空白, 記号等を除去）
+    # 対応例: "146-0082", "１４６－００８２", "〒146ー0082", "146－0082", "146 0082" → "1460082"
+    if v_clean.isdigit():
+        return v_clean.zfill(7)
+    return v_clean
 
 
 KANJI_DIGITS = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
@@ -626,5 +632,3 @@ def add_geocode_columns(df: pd.DataFrame, addr_cols: List[str], results: Dict[st
                 out.at[idx, lon_col] = res[1]
                 out.at[idx, flag_col] = res[2]
     return out
-
-

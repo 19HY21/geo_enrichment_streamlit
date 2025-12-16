@@ -269,6 +269,18 @@ def _run_pipeline(
         if helper_col in df_out_merge.columns:
             df_out_merge = df_out_merge.drop(columns=[helper_col])
 
+    # 列順を「元データ → 郵便番号突合列 → 住所突合/ジオコード列」に揃える
+    base_cols = [c for c in df_input.columns if c not in ["__merge_key", "__is_parquet"]]
+    ordered = [c for c in base_cols if c in df_out_merge.columns]
+    for zcol in zip_cols:
+        prefix = f"{zcol}_"
+        ordered.extend([c for c in df_out_merge.columns if c.startswith(prefix) and c not in ordered])
+    for acol in addr_cols:
+        prefix = f"{acol}_"
+        ordered.extend([c for c in df_out_merge.columns if c.startswith(prefix) and c not in ordered])
+    remaining = [c for c in df_out_merge.columns if c not in ordered]
+    df_out_merge = df_out_merge[ordered + remaining]
+
     df_input_clean = df_input.drop(columns=["__merge_key", "__is_parquet"], errors="ignore")
 
     if file_kind == "excel":
