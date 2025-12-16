@@ -286,9 +286,7 @@ def _run_pipeline(
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar("out", 100, "完了")
 
-'''
     return buf, fname, df_out_merge, local_cache_path
-'''
 
 
 def _build_excel_output(
