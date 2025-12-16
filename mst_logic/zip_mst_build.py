@@ -26,6 +26,24 @@ def normalize_zip(val: Optional[str]) -> str:
     return s.zfill(7)
 
 
+def clean_town_name(val: Optional[str]) -> str:
+    """
+    町域名の補正:
+    - 「以下に掲載がない場合」なら空（Null）扱い
+    - 「霞が関（次のビルを除く）」のような括弧書きを除去
+    """
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if not s:
+        return ""
+    if "以下に掲載がない場合" in s:
+        return ""
+    # 括弧書きを除去（全角括弧）
+    s = s.split("（")[0].strip()
+    return s
+
+
 def download_zip(url: str) -> bytes:
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
@@ -97,7 +115,7 @@ def build_residential(df: pd.DataFrame) -> pd.DataFrame:
     out["郵便番号"] = df["郵便番号"].apply(normalize_zip)
     out["都道府県名(漢字)"] = df["都道府県名(漢字)"]
     out["市区町村名(漢字)"] = df["市区町村名(漢字)"]
-    out["町域名(漢字)"] = df["町域名(漢字)"]
+    out["町域名(漢字)"] = df["町域名(漢字)"].apply(clean_town_name)
     out["小字名、丁目、番地等(漢字)"] = None
     out["大口事業所名(漢字)"] = None
     out["事業所郵便番号フラグ"] = "0"
@@ -124,7 +142,7 @@ def build_business(df: pd.DataFrame) -> pd.DataFrame:
     out["郵便番号"] = df["郵便番号"].apply(normalize_zip)
     out["都道府県名(漢字)"] = df["都道府県名(漢字)"]
     out["市区町村名(漢字)"] = df["市区町村名(漢字)"]
-    out["町域名(漢字)"] = df["町域名(漢字)"]
+    out["町域名(漢字)"] = df["町域名(漢字)"].apply(clean_town_name)
     out["大口事業所名(漢字)"] = df["大口事業所名(漢字)"]
     addr_parts_raw = [
         df.get("小字名、丁目、番地等(漢字)"),
