@@ -62,6 +62,7 @@ def _run_pipeline(
     process_mask: pd.Series | None = None,
     chunk_offset: int = 0,
 ):
+
     # ダウンロードUIを進捗直下に配置
     st.session_state.setdefault("addr_chunk_downloads", [])
     st.session_state.setdefault("geo_chunk_downloads", [])
@@ -70,7 +71,7 @@ def _run_pipeline(
     status = st.empty()
     live_download_section = st.container()
     with live_download_section:
-        st.markdown("住所/ジオのチャンクダウンロード")
+        st.markdown("ダウンロードリスト")
 
     weights = {"zip": 20, "addr": 20, "geo": 55, "out": 5}
     enabled_phases = ["zip"]
@@ -107,8 +108,7 @@ def _run_pipeline(
     df_proc_in = df_input.copy()
     _log(
         log_box,
-        f"入力件数: {total_rows_all} / 住所突合対象件数: "
-        f"{len(df_input) if process_mask is None else process_mask.sum()}",
+        f"入力件数: {total_rows_all}"
     )
 
     cols_needed = list(dict.fromkeys(zip_cols + addr_cols))
@@ -178,7 +178,6 @@ def _run_pipeline(
                     b64 = base64.b64encode(buf.getvalue()).decode()
                     href = f'<a href="data:application/octet-stream;base64,{b64}" download="{chunk_fname}">住所チャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
                     st.session_state["addr_chunk_downloads"].append(href)
-                    st.markdown(href, unsafe_allow_html=True)
                 except Exception:
                     pass
                 processed = end
@@ -250,7 +249,6 @@ def _run_pipeline(
                 b64 = base64.b64encode(geo_bytes.getvalue()).decode()
                 href = f'<a href="data:application/octet-stream;base64,{b64}" download="{geo_chunk_fname}">ジオコードチャンク {start+1+chunk_offset}-{end+chunk_offset} をダウンロード (Parquet)</a>'
                 st.session_state["geo_chunk_downloads"].append(href)
-                st.markdown(href, unsafe_allow_html=True)
             except Exception:
                 pass
             overall_done = end
@@ -358,7 +356,7 @@ def main():
 
     uploaded = st.file_uploader("入力ファイルを選択 (Excel/CSV)", type=["csv", "xlsx", "xls"])
     parquet_uploader = st.file_uploader(
-        "突合済みParquetをアップロード（任意・複数可）",
+        "住所チャンクをアップロード（任意・複数可）",
         type=["parquet"],
         key="parquet_uploader",
         accept_multiple_files=True,
@@ -397,7 +395,7 @@ def main():
         addr_cols = st.multiselect("住所列を選択", options=df_input.columns.tolist())
         geocode_enabled = st.checkbox("緯度経度を付与する", value=False)
         cache_uploader = st.file_uploader(
-            "キャッシュParquetをアップロード（任意・複数可）", type=["parquet"], accept_multiple_files=True
+            "ジオコードチャンクをアップロード（任意・複数可）", type=["parquet"], accept_multiple_files=True
         )
 
         uploaded_cache = None
@@ -416,7 +414,7 @@ def main():
                     if pd.notna(row.get("address"))
                 }
             except Exception as e:
-                st.warning(f"キャッシュParquetの読み込みに失敗しました: {e}")
+                st.warning(f"ジオコードチャンクの読み込みに失敗しました: {e}")
 
         # Parquetがある場合は住所列キーでParquetを優先マージ（未一致のみ処理）
         if df_parquet is not None and addr_cols:
@@ -470,8 +468,8 @@ def main():
                 df_input = base_df.reset_index().rename(columns={"index": "__merge_key"})
 
                 st.info(
-                    f"キー件数 ベース={len(base_keys)} / Parquet={len(pq_keys)} / 共通={len(common_keys)} / "
-                    f"ベースのみ={len(base_only)} / Parquetのみ={len(pq_only)}"
+                    f"住所キー件数 元データ={len(base_keys)} / 住所チャンク={len(pq_keys)} / 共通={len(common_keys)} / "
+                    f"元データのみ={len(base_only)} / 住所チャンクのみ={len(pq_only)}"
                 )
 
                 process_mask = ~df_input["__is_parquet"]
@@ -511,13 +509,15 @@ def main():
     # 進捗エリア下に常時ダウンロード表示（チャンクはリンクのみ）
     download_section = st.container()
     with download_section:
-        if st.session_state.get("addr_chunk_downloads"):
-            st.markdown("住所突合チャンクのダウンロード（処理中も利用可）")
-            for item in st.session_state["addr_chunk_downloads"]:
+        addr_links = st.session_state.get("addr_chunk_downloads") or []
+        if addr_links:
+            st.markdown("住所チャンクのダウンロード（処理中も利用可）")
+            for item in addr_links:
                 st.markdown(item, unsafe_allow_html=True)
-        if st.session_state.get("geo_chunk_downloads"):
+        geo_links = st.session_state.get("geo_chunk_downloads") or []
+        if geo_links:
             st.markdown("ジオコーディングチャンクのダウンロード（処理中も利用可）")
-            for item in st.session_state["geo_chunk_downloads"]:
+            for item in geo_links:
                 st.markdown(item, unsafe_allow_html=True)
         if st.session_state.get("result_file"):
             st.download_button(
@@ -529,7 +529,7 @@ def main():
             )
         if st.session_state.get("cache_file"):
             st.download_button(
-                label="キャッシュParquetをダウンロード（次回再利用用）",
+                label="ジオコード全チャンクをダウンロード（次回再利用可）",
                 data=st.session_state["cache_file"]["data"],
                 file_name=st.session_state["cache_file"]["name"],
                 mime="application/octet-stream",
