@@ -287,17 +287,6 @@ def _run_pipeline(
     prog_bar("out", 100, "完了")
 
 '''
-    # 進捗バー直下にダウンロードリンク/ボタンを集約表示
-    with live_download_section:
-        if st.session_state.get("addr_chunk_downloads"):
-            st.markdown("住所突合チャンクのダウンロード")
-            for item in st.session_state["addr_chunk_downloads"]:
-                st.markdown(item, unsafe_allow_html=True)
-        if st.session_state.get("geo_chunk_downloads"):
-            st.markdown("ジオコーディングチャンクのダウンロード")
-            for item in st.session_state["geo_chunk_downloads"]:
-                st.markdown(item, unsafe_allow_html=True)
-
     return buf, fname, df_out_merge, local_cache_path
 '''
 
