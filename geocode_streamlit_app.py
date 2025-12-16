@@ -286,6 +286,7 @@ def _run_pipeline(
     _log(log_box, f"出力生成完了: {fname}")
     prog_bar("out", 100, "完了")
 
+'''
     # 進捗バー直下にダウンロードリンク/ボタンを集約表示
     with live_download_section:
         if st.session_state.get("addr_chunk_downloads"):
@@ -298,6 +299,7 @@ def _run_pipeline(
                 st.markdown(item, unsafe_allow_html=True)
 
     return buf, fname, df_out_merge, local_cache_path
+'''
 
 
 def _build_excel_output(
