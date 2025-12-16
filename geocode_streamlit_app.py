@@ -185,7 +185,6 @@ def _run_pipeline(
                 processed = end
                 pct = processed / max(total_rows, 1) * 100
                 prog_bar("addr", pct, f"[addr] {processed}/{total_rows} ({pct:.1f}%)")
-                _log(log_box, f"[addr] chunk {start+1}-{end} 保存: {chunk_path}")
                 _log(log_box, f"[addr] 進捗 {processed}/{total_rows} ({pct:.1f}%)")
 
             df_addr_out = pd.concat(addr_chunks).sort_index()
