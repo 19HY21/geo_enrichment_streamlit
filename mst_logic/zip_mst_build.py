@@ -1,5 +1,6 @@
 ﻿import io
 import os
+import re
 import zipfile
 import unicodedata
 from pathlib import Path
@@ -30,7 +31,7 @@ def clean_town_name(val: Optional[str]) -> str:
     """
     町域名の補正:
     - 「以下に掲載がない場合」なら空（Null）扱い
-    - 「霞が関（次のビルを除く）」のような括弧書きを除去
+    - 「（次のビルを除く）」が含まれる場合はその括弧書きを除去
     """
     if val is None:
         return ""
@@ -39,8 +40,8 @@ def clean_town_name(val: Optional[str]) -> str:
         return ""
     if "以下に掲載がない場合" in s:
         return ""
-    # 括弧書きを除去（全角括弧）
-    s = s.split("（")[0].strip()
+    # 「（次のビルを除く）」に限定して除去（全角括弧）
+    s = re.sub(r"（[^）]*次のビルを除く[^）]*）", "", s).strip()
     return s
 
 
