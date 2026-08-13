@@ -1,7 +1,7 @@
 """
 総務省の全国地方公共団体コード一覧を取得・整形してマスタを生成するスクリプト。
 仕様:
-- 取得元: https://www.soumu.go.jp/main_content/000925835.xls
+- 取得元: https://www.soumu.go.jp/denshijiti/code.html（都道府県コード及び市区町村コード）
 - シート名は年度で変動するため、"政令" を含むシートを政令指定都市、その他を現在の団体として扱う
 - 団体コードでフルジョインし、政令指定都市フラグを付与
 - カラム名はNFKC正規化＋括弧統一で揃える
@@ -21,7 +21,7 @@ from typing import Dict, Optional
 import pandas as pd
 import requests
 
-SRC_URL = "https://www.soumu.go.jp/main_content/000925835.xls"
+SRC_URL = "https://www.soumu.go.jp/main_content/000925835.xlsx"
 OUT_PATH = Path(r"mst/mic_localgoverment_mst.xlsx")
 
 
