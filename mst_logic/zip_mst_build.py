@@ -170,8 +170,8 @@ def main():
     res_raw = download_zip(ZIP_URL)
     biz_raw = download_zip(BIZ_URL)
 
-    df_res_raw = read_first_csv_from_zip(res_raw)
-    df_biz_raw = read_first_csv_from_zip(biz_raw)
+    df_res_raw = read_first_csv_from_zip(res_raw, encoding="utf-8")
+    df_biz_raw = read_first_csv_from_zip(biz_raw, encoding="cp932")
 
     res_df = build_residential(df_res_raw)
     biz_df = build_business(df_biz_raw)
