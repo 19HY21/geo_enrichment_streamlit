@@ -472,6 +472,7 @@ def main():
                 pq_only = pq_keys - base_keys
 
                 aligned = pq_df.reindex(base_df.index)
+                aligned = aligned[~aligned.index.duplicated(keep="first")]
                 base_df.update(aligned)
 
                 base_df["__is_parquet"] = base_df.index.isin(common_keys)
