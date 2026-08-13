@@ -177,7 +177,22 @@ def _infer_prefecture_from_city(addr_norm: str, city_groups: Dict[str, pd.DataFr
 
 def read_master() -> pd.DataFrame:
     df = pd.read_excel(MASTER_PATH, dtype=str)
+
+    # 列名の前後空白を除去
     df.columns = [c.strip() for c in df.columns]
+
+    # 表記ゆれを補正
+    rename_map = {}
+    for col in df.columns:
+        if col in ["都道府県", "都道府県名"]:
+            rename_map[col] = "都道府県名(漢字)"
+        elif col in ["市区町村", "市区町村名"]:
+            rename_map[col] = "市区町村名(漢字)"
+        elif col in ["町域", "町域名"]:
+            rename_map[col] = "町域名(漢字)"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
 
     def to_region(code: str):
         if not code or not isinstance(code, str):
