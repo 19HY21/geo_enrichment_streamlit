@@ -427,8 +427,14 @@ def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[
 def attach_master_by_address(df: pd.DataFrame, master: pd.DataFrame, addr_cols: List[str], progress=None, used_master_idx=None) -> pd.DataFrame:
     if not addr_cols:
         return df.copy()
+
+    # 全角かっこを半角かっこに変換する
+    master = master.copy()
+    master.columns = [str(c).replace("（", "(").replace("）", ")").strip() for c in master.columns]
+    
     result = df.copy()
     master_addr = master[master["事業所郵便番号フラグ"] == "0"].copy()
+    
     master_by_pref: Dict[str, pd.DataFrame] = {p: g for p, g in master_addr.groupby("都道府県名(漢字)")}
     master_addr["city_norm"] = master_addr["市区町村名(漢字)"].fillna("").apply(normalize_address)
     city_groups: Dict[str, pd.DataFrame] = {k: v for k, v in master_addr.groupby("city_norm")}
