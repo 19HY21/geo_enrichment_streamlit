@@ -3,7 +3,7 @@
 Core geocoding logic
 - マスタ読み込み
 - 郵便番号/住所突合
-- ジオコーディングとキャッシュ
+- ジオコーディング（国土地理院API）とキャッシュ
 """
 from __future__ import annotations
 
@@ -22,14 +22,17 @@ import requests
 BASE_DIR = os.path.dirname(__file__)
 MASTER_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "mst", "zipcode_localgoverment_mst.xlsx"))
 OUTPUT_SUFFIX = "_GSI" # 出力列接尾辞
-CHUNK_SIZE = 100_000  # Nominatim負荷を抑える
+CHUNK_SIZE = 100_000  # リクエスト負荷を抑える
 CHUNK_SLEEP_SEC = 7.0 # チャンク間隔（秒）
-REQUEST_SLEEP_SEC = 0.2 # 各リクエスト間隔（秒）
+REQUEST_SLEEP_SEC = 0.1 # 国土地理院API用のリクエスト間隔（秒）
 PROGRESS_UPDATE_SEC = 60 # プログレス更新間隔（秒）
 CHECKPOINT_SAVE_EVERY = 1_000  # ジオコーディング時のキャッシュ保存間隔（ユニーク住所数ベース）
 CACHE_DIR = os.path.join(BASE_DIR, "cache") # キャッシュディレクトリ
-GLOBAL_CACHE_PATH = os.path.join(CACHE_DIR, "geocode_cache_global.json") # グローバルキャッシュパス
+GLOBAL_CACHE_PATH = os.path.join(CACHE_DIR, "geocode_cache_global.parquet") # グローバルキャッシュパス
 BATCH_SIZE_DEFAULT = 1_000 # ジオコーディング一括処理サイズ（住所数）
+
+# 国土地理院 地名検索API エンドポイント
+GSI_API_URL = "https://msearch.gsi.go.jp/address-search/AddressSearch"
 
 # 地方コード・地方名マッピング（都道府県コード頭2桁で判定）
 REGION_MAP = {
@@ -82,9 +85,8 @@ def pad_zip(val: Optional[str]) -> str:
     v = safe_strip(val)
     if not v:
         return v
-    v_norm = unicodedata.normalize("NFKC", v)  # 全角数字/記号→半角（例: １２３－４５６７, 〒１２３４５６７）
-    v_clean = re.sub(r"\D", "", v_norm)  # 非数字を除去（ハイフン各種, 〒, 空白, 記号等を除去）
-    # 対応例: "146-0082", "１４６－００８２", "〒146ー0082", "146－0082", "146 0082" → "1460082"
+    v_norm = unicodedata.normalize("NFKC", v)  # 全角数字/記号→半角
+    v_clean = re.sub(r"\D", "", v_norm)  # 非数字を除去
     if v_clean.isdigit():
         return v_clean.zfill(7)
     return v_clean
@@ -98,7 +100,6 @@ def _to_kanji_number(num_str: str) -> str:
         n = int(num_str)
     except Exception:
         return num_str
-    # 3桁以上（100以上）は番地・号など長い数字とみなし変換しない
     if n >= 100:
         return num_str
     if n == 0:
@@ -109,7 +110,6 @@ def _to_kanji_number(num_str: str) -> str:
         q, n = divmod(n, val)
         if q == 0:
             continue
-        # 安全のため、想定外の桁はそのまま返す
         if q >= len(KANJI_DIGITS):
             return num_str
         if val == 1:
@@ -122,7 +122,6 @@ def _to_kanji_number(num_str: str) -> str:
 
 
 def normalize_address(addr: str) -> str:
-    # 住所正規化（小書きカナを通常カナに、数字を漢数字に、空白類除去）
     if not addr:
         return ""
     s = str(addr)
@@ -141,9 +140,6 @@ def normalize_address(addr: str) -> str:
 
 
 def _has_paren_ambiguity(addr_norm: str, pref: Optional[str], df_rows: pd.DataFrame, city_norm_override: Optional[str] = None) -> bool:
-    """
-    括弧付きの町域候補があり、入力が括弧前までしかない場合は曖昧とみなす。
-    """
     for _, row in df_rows.iterrows():
         town = safe_strip(row["町域名(漢字)"])
         if "(" not in town and "（" not in town:
@@ -155,14 +151,12 @@ def _has_paren_ambiguity(addr_norm: str, pref: Optional[str], df_rows: pd.DataFr
         city_norm = city_norm_override if city_norm_override is not None else normalize_address(city_raw)
         prefix_norm = normalize_address(f"{'' if pref is None else pref}{city_raw}{town_prefix}")
         full_norm = normalize_address(f"{'' if pref is None else pref}{city_raw}{town}")
-        # 入力が括弧前まで一致し、括弧以降を含まない場合は曖昧とみなす
         if addr_norm.startswith(prefix_norm) and not addr_norm.startswith(full_norm):
             return True
     return False
 
 
 def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:
-    # 都道府県名は通常住所先頭に付くため、前方一致で判定
     for p in prefs:
         p_norm = normalize_address(p)
         if p_norm and addr.startswith(p_norm):
@@ -171,10 +165,6 @@ def find_prefecture(addr: str, prefs: List[str]) -> Optional[str]:
 
 
 def _infer_prefecture_from_city(addr_norm: str, city_groups: Dict[str, pd.DataFrame]) -> Optional[Tuple[pd.Series, str]]:
-    """
-    都道府県名がなく、市区町村で一意に決まる場合に都道府県を補完する。
-    戻り値: (row, flag) or None
-    """
     for city_norm, df_city in city_groups.items():
         if not city_norm:
             continue
@@ -186,12 +176,10 @@ def _infer_prefecture_from_city(addr_norm: str, city_groups: Dict[str, pd.DataFr
 
 
 def read_master() -> pd.DataFrame:
-    # マスタ読み込みと地方コード付与
     df = pd.read_excel(MASTER_PATH, dtype=str)
     df.columns = [c.strip() for c in df.columns]
 
     def to_region(code: str):
-        # 都道府県コードから地方コード・地方名を取得
         if not code or not isinstance(code, str):
             return None, None
         pref2 = code[:2]
@@ -212,7 +200,6 @@ def read_master() -> pd.DataFrame:
 
 
 def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], city_groups: Optional[Dict[str, pd.DataFrame]] = None) -> Optional[Tuple[Dict[str, Optional[str]], Optional[int], Optional[str]]]:
-    # 住所からマスタ突合
     addr_norm = normalize_address(addr)
     if not addr_norm:
         return None
@@ -237,7 +224,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         df_pref_sorted["len_city_town"] = df_pref_sorted["市区町村名(漢字)"].fillna("").str.len() + df_pref_sorted["町域名(漢字)"].fillna("").str.len()
         df_pref_sorted = df_pref_sorted.sort_values("len_city_town", ascending=False)
 
-        # 最長一致で採用。入力が短い町域候補がある場合は曖昧として町域なし。
         ambiguous_prefix = False
         paren_ambiguous = _has_paren_ambiguity(addr_norm, pref, df_pref_sorted)
         best_row = None
@@ -268,7 +254,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
         if paren_ambiguous or ambiguous_prefix:
             return result, None, "pref_city"
 
-        # 市区町村一致
         for _, row in df_pref_sorted.iterrows():
             city = safe_strip(row["市区町村名(漢字)"])
             if city and city in addr_norm:
@@ -282,13 +267,10 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                 match_flag = "pref_city"
                 return result, idx_used, match_flag
 
-        # 都道府県のみ
         result["町域名(漢字)"] = None
         return result, None, "pref_only"
 
-    # 都道府県なし: 市区町村グループで判定
     if city_groups is not None:
-        # 市区町村から都道府県が一意に決まるケース（この後も町域探索を続ける）
         inferred = _infer_prefecture_from_city(addr_norm, city_groups)
         if inferred:
             row, flag = inferred
@@ -306,7 +288,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
             match_flag = flag
 
         for city_norm, df_city in city_groups.items():
-            # 部分一致だと「中央区」で別の都府県に誤ヒットするため前方一致のみ
             if city_norm and addr_norm.startswith(city_norm):
                 ambiguous_prefix = False
                 paren_ambiguous = _has_paren_ambiguity(addr_norm, None, df_city, city_norm_override=city_norm)
@@ -338,7 +319,6 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                     return result, idx_used, match_flag
                 if paren_ambiguous or ambiguous_prefix:
                     return result, None, "no_pref_city"
-                # 町域不明だが市区町村が一意
                 row = df_city.iloc[0]
                 result.update({
                     "地方コード": row.get("地方コード"),
@@ -353,21 +333,18 @@ def match_master_address(addr: str, master_by_pref: Dict[str, pd.DataFrame], cit
                 idx_used = row.name
                 match_flag = "no_pref_city"
                 return result, idx_used, match_flag
-        # 市区町村推定だけで町域が決まらなかった場合
         if inferred:
             return result, idx_used, match_flag
     return None
 
 
 def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[str], progress=None, used_zip_codes=None) -> pd.DataFrame:
-    # 郵便番号突合
     result = df.copy()
     total = max(len(zip_cols), 1)
     done = 0
     if used_zip_codes is None:
         used_zip_codes = set()
 
-    # 郵便番号ごとに付与内容とフラグを決める
     master_zip = master.copy()
     master_zip["郵便番号"] = master_zip["郵便番号"].apply(pad_zip)
     zip_mapping: Dict[str, Tuple[Dict[str, Optional[str]], Optional[str]]] = {}
@@ -377,15 +354,13 @@ def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[
             base = grp.iloc[0]
             record = {col: base.get(col) for col in MASTER_COLUMNS_ZIP}
             if len(grp) == 1:
-                flag = "unique_full"  # 郵便番号＋都道府県＋市区町村＋町域が一意
+                flag = "unique_full"
             else:
-                # 同じ郵便番号で町域が複数 → 町域系は付与しない
                 record["町域名(漢字)"] = None
                 if "小字名、丁目、番地等（漢字）" in record:
                     record["小字名、丁目、番地等（漢字）"] = None
-                flag = "multi_town"  # 郵便番号＋都道府県＋市区町村は一意だが町域が複数
+                flag = "multi_town"
         else:
-            # 都道府県が単一で市区町村が複数 → 都道府県だけ付与
             pref_set = set(grp["都道府県名(漢字)"].dropna().unique().tolist())
             if len(pref_set) == 1:
                 base = grp.iloc[0]
@@ -395,9 +370,8 @@ def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[
                 record["地方名"] = base.get("地方名")
                 record["都道府県コード"] = base.get("都道府県コード")
                 record["都道府県名(漢字)"] = base.get("都道府県名(漢字)")
-                flag = "ambiguous_pref_city"  # 県だけ確定、都市は複数
+                flag = "ambiguous_pref_city"
             else:
-                # 都道府県も複数 → 郵便番号のみ付与
                 record = {col: None for col in MASTER_COLUMNS_ZIP}
                 record["郵便番号"] = zip_code
                 flag = "ambiguous_pref_city"
@@ -436,7 +410,6 @@ def attach_master_by_zip(df: pd.DataFrame, master: pd.DataFrame, zip_cols: List[
 
 
 def attach_master_by_address(df: pd.DataFrame, master: pd.DataFrame, addr_cols: List[str], progress=None, used_master_idx=None) -> pd.DataFrame:
-    # 住所突合
     if not addr_cols:
         return df.copy()
     result = df.copy()
@@ -495,24 +468,28 @@ def attach_master_by_address(df: pd.DataFrame, master: pd.DataFrame, addr_cols: 
     return result
 
 
-def nominatim_search(query: str, user_agent: str) -> Optional[Tuple[float, float]]:
-    # Nominatimジオコーディング検索
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": query, "format": "json", "limit": 1}
+# --- 国土地理院API用に変更した関数 ---
+
+def gsi_search(query: str, user_agent: str = "Geocoding/1.0") -> Optional[Tuple[float, float]]:
+    """国土地理院 地名検索APIによるジオコーディング"""
+    params = {"q": query}
     headers = {"User-Agent": user_agent}
     try:
-        res = requests.get(url, params=params, headers=headers, timeout=10)
+        res = requests.get(GSI_API_URL, params=params, headers=headers, timeout=10)
         if res.status_code == 200:
             data = res.json()
-            if isinstance(data, list) and data:
-                return float(data[0]["lat"]), float(data[0]["lon"])
+            if isinstance(data, list) and len(data) > 0:
+                # 国土地理院APIは [経度(lon), 緯度(lat)] の順で返ってくる点に注意
+                coordinates = data[0].get("geometry", {}).get("coordinates", [])
+                if len(coordinates) >= 2:
+                    return float(coordinates[1]), float(coordinates[0]) # lat, lon
     except Exception:
         return None
     return None
 
 
 def generate_queries(addr: str) -> List[Tuple[str, str]]:
-    # ジオコーディング用クエリ生成
+    """ジオコーディング用クエリ生成"""
     addr = normalize_address(addr)
     queries = []
     if addr:
@@ -535,7 +512,6 @@ def generate_queries(addr: str) -> List[Tuple[str, str]]:
 
 
 def load_cache(cache_path: str) -> Dict[str, Tuple[Optional[float], Optional[float], str]]:
-    # ジオコーディングキャッシュ読み込み（Parquetのみ）
     if not cache_path or not os.path.exists(cache_path):
         return {}
     try:
@@ -552,7 +528,6 @@ def load_cache(cache_path: str) -> Dict[str, Tuple[Optional[float], Optional[flo
 
 
 def save_cache(cache_path: str, cache: Dict[str, Tuple[Optional[float], Optional[float], str]]):
-    # ジオコーディングキャッシュ保存（Parquetのみ）
     if not cache_path:
         return
     try:
@@ -569,7 +544,7 @@ def save_cache(cache_path: str, cache: Dict[str, Tuple[Optional[float], Optional
 
 
 def geocode_addresses(addresses: List[str], user_agent: str, cache: Dict[str, Tuple[Optional[float], Optional[float], str]], progress_cb=None, cache_save_cb=None) -> Tuple[Dict[str, Tuple[Optional[float], Optional[float], str]], int, int]:
-    # 住所リストをジオコーディング
+    """住所リストを国土地理院APIでジオコーディング"""
     results: Dict[str, Tuple[Optional[float], Optional[float], str]] = {}
     unique_addrs = [a for a in pd.Series(addresses).dropna().unique().tolist() if normalize_address(a)]
     total = len(unique_addrs)
@@ -586,7 +561,7 @@ def geocode_addresses(addresses: List[str], user_agent: str, cache: Dict[str, Tu
         else:
             found = False
             for query, flag in generate_queries(addr):
-                res = nominatim_search(query, user_agent)
+                res = gsi_search(query, user_agent)
                 if res:
                     results[addr] = (res[0], res[1], flag)
                     cache[norm] = (res[0], res[1], flag)
@@ -614,7 +589,6 @@ def geocode_addresses(addresses: List[str], user_agent: str, cache: Dict[str, Tu
 
 def add_geocode_columns(df: pd.DataFrame, addr_cols: List[str], results: Dict[str, Tuple[Optional[float], Optional[float], str]]) -> pd.DataFrame:
     out = df.copy()
-    # ジオコーディング結果を各住所列に付与
     for col in addr_cols:
         lat_col = f"{col}_lat"
         lon_col = f"{col}_lon"
