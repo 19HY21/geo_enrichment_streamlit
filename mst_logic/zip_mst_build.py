@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR
 OUT_PATH = Path(r"mst/japanpost_zipcode_mst.xlsx")
 ZIP_URL = "https://www.post.japanpost.jp/service/search/zipcode/download/utf/zip/utf_ken_all.zip"
-BIZ_URL = "https://www.post.japanpost.jp/zipcode/dl/jigyosyo/zip/jigyosyo.zip"
+BIZ_URL = "https://www.post.japanpost.jp/service/search/zipcode/download/office/zip/jigyosyo.zip"
 
 
 def normalize_zip(val: Optional[str]) -> str:
